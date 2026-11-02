@@ -1,0 +1,1 @@
+"""Fintech Change Radar."""

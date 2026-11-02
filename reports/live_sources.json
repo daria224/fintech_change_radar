@@ -1,0 +1,310 @@
+{
+  "checked_at": "2026-11-02T15:09:29.989513+00:00",
+  "sources": [
+    {
+      "name": "Банки.ру",
+      "url": "https://www.banki.ru/xml/news.rss",
+      "ok": true,
+      "items": 25,
+      "oldest": "2026-11-01T11:00:50+00:00",
+      "newest": "2026-11-02T14:10:53+00:00",
+      "sample": [
+        {
+          "url": "https://www.banki.ru/news/lenta/?id=11028641",
+          "title": "Названы суммы POS-кредитов, которые сейчас одобряют россиянам",
+          "text": "Показатель стабилизировался в диапазоне 65–75 тысяч рублей, но банки ужесточают требования.",
+          "published_at": "2026-11-02 14:10:53+00:00",
+          "prefilter": true
+        },
+        {
+          "url": "https://www.banki.ru/news/lenta/?id=11028637",
+          "title": "Доллар — от 80,77 ₽: где выгодно обменять валюту 2 ноября",
+          "text": "По данным витрины Банки.ру — сервиса сравнения курсов обмена валют в банках.",
+          "published_at": "2026-11-02 12:56:08+00:00",
+          "prefilter": true
+        }
+      ],
+      "extraction": {
+        "url": "https://www.banki.ru/news/lenta/?id=11028641",
+        "mode": "полный текст",
+        "chars": 1443,
+        "preview": "Средний размер POS-кредитов (кредитов гражданам, предоставленных в торговых точках) в сентябре 2026 года составил 70,9 тысячи рублей, сократившись на 2,6% по сравнению с августом. Показатель снизился впервые после четырех месяцев непрерывного роста, сообщили в Национальном бюро кредитных историй (НБКИ).\nПо сравнению с сентябрем прошлого года средни"
+      }
+    },
+    {
+      "name": "Банк России",
+      "url": "https://www.cbr.ru/rss/RssPress",
+      "ok": true,
+      "items": 14,
+      "oldest": "2026-10-05T07:40:00+00:00",
+      "newest": "2026-11-02T08:30:14+00:00",
+      "sample": [
+        {
+          "url": "https://www.cbr.ru/press/PR/?file=639292076474400194COINS.htm",
+          "title": "Михаил Сперанский – архитектор государственных реформ (02.11.2026)",
+          "text": "Банк России 3 ноября 2026 года выпускает в обращение памятную серебряную монету номиналом 2 рубля «М.М. Сперанский» серии «Российская юриспруденция» (каталожный № 5110-0201). Михаил Сперанский (1772–1839) вошел в историю как один из крупнейших реформаторов России XIX века. В эпоху Александра I он разработал план преобразования государственного упра",
+          "published_at": "2026-11-02 08:30:14+00:00",
+          "prefilter": true
+        },
+        {
+          "url": "https://www.cbr.ru/press/PR/?file=639289575398220007SITE.htm",
+          "title": "На сайте Банка России пройдут технические работы (30.10.2026)",
+          "text": "31 октября 2026 года возможны кратковременные замедления в работе официального сайта Банка России, связанные с проведением технических работ. Приносим извинения за возможные неудобства.",
+          "published_at": "2026-10-30 15:00:00+00:00",
+          "prefilter": true
+        }
+      ],
+      "extraction": {
+        "url": "https://www.cbr.ru/press/PR/?file=639292076474400194COINS.htm",
+        "mode": "полный текст",
+        "chars": 2065,
+        "preview": "Банк России 3 ноября 2026 года выпускает в обращение памятную серебряную монету номиналом 2 рубля «М.М. Сперанский» серии «Российская юриспруденция» (каталожный № 5110-0201).\nМихаил Сперанский (1772–1839) вошел в историю как один из крупнейших реформаторов России XIX века. В эпоху Александра I он разработал план преобразования государственного упра"
+      }
+    },
+    {
+      "name": "Хабр: Финансы",
+      "url": "https://habr.com/ru/rss/hubs/finance/all/?limit=100",
+      "ok": true,
+      "items": 100,
+      "oldest": "2026-09-21T10:25:27+00:00",
+      "newest": "2026-11-02T11:08:45+00:00",
+      "sample": [
+        {
+          "url": "https://habr.com/ru/articles/1102696/",
+          "title": "Считаю юнит-экономику в коде: где расходятся формулы калькуляторов",
+          "text": "Калькулятор юнит экономики в коде: тёмная КДПВ с тремя числами - на сколько рублей не сходится один пример из выдачи, сколько формул невыкупа нашлось и разброс логистики на штуку при выкупе 30% Читать далее",
+          "published_at": "2026-11-02 11:08:45+00:00",
+          "prefilter": false
+        },
+        {
+          "url": "https://habr.com/ru/articles/1102652/",
+          "title": "Кто заплатит, если ИИ-агент ошибётся: страхование ИИ-рисков в России и на Западе",
+          "text": "Типовая ситуация 2026 года: компания подключила ИИ-агента к CRM, чтобы тот автоматически чистил дубликаты контактов. Агент ошибся в классификации, посчитал половину клиентской базы «дублями» и удалил её. Без хакерской атаки, без злого умысла со стороны разработчика — просто автономное исполнение ошибочного вывода модели. Кто виноват? Разработчик мо",
+          "published_at": "2026-11-02 10:16:15+00:00",
+          "prefilter": true
+        }
+      ],
+      "extraction": {
+        "url": "https://habr.com/ru/articles/1102652/",
+        "mode": "полный текст",
+        "chars": 14000,
+        "preview": "Типовая ситуация 2026 года: компания подключила ИИ-агента к CRM, чтобы тот автоматически чистил дубликаты контактов. Агент ошибся в классификации, посчитал половину клиентской базы «дублями» и удалил её. Без хакерской атаки, без злого умысла со стороны разработчика — просто автономное исполнение ошибочного вывода модели.\nКто виноват? Разработчик мо"
+      }
+    },
+    {
+      "name": "Finextra",
+      "url": "https://www.finextra.com/rss/headlines.aspx",
+      "ok": true,
+      "items": 52,
+      "oldest": "2026-10-22T15:00:00+00:00",
+      "newest": "2027-01-26T15:00:00+00:00",
+      "sample": [
+        {
+          "url": "https://www.finextra.com/newsarticle/48683/binance-users-withdraw-5bn-in-wake-of-hack",
+          "title": "Binance users withdraw $5bn in wake of hack",
+          "text": "Binance users have withdrawn nearly $5 billion from the crypto exchange since it reopened after the hack last week that saw North Korea-linked crooks make off with $6.3 billion.",
+          "published_at": "2026-11-02 14:24:00+00:00",
+          "prefilter": true
+        },
+        {
+          "url": "https://www.finextra.com/newsarticle/48682/opay-withdraws-planned-304m-us-ipo-after-regulatory-inquiry",
+          "title": "OPay withdraws planned $304m US IPO after regulatory inquiry",
+          "text": "OPay Limited has announced that it will be terminating its underwriting agreement and shelving plans for an initial public offering (IPO) on the New York Stock Exchange (NYSE) following a regulatory inquiry in a foreign jurisdiction the company described as “immaterial” to its core business.",
+          "published_at": "2026-11-02 12:15:00+00:00",
+          "prefilter": true
+        }
+      ],
+      "extraction": {
+        "url": "https://www.finextra.com/newsarticle/48683/binance-users-withdraw-5bn-in-wake-of-hack",
+        "mode": "описание; полный текст недоступен",
+        "chars": 177,
+        "preview": "Binance users have withdrawn nearly $5 billion from the crypto exchange since it reopened after the hack last week that saw North Korea-linked crooks make off with $6.3 billion."
+      }
+    },
+    {
+      "name": "TechCrunch",
+      "url": "https://techcrunch.com/feed/",
+      "ok": true,
+      "items": 20,
+      "oldest": "2026-10-31T15:41:57+00:00",
+      "newest": "2026-11-02T15:00:00+00:00",
+      "sample": [
+        {
+          "url": "https://techcrunch.com/2026/11/02/omen-ai-adds-liquid-know-how-in-16-million-aquatic-labs-acquisition/",
+          "title": "Omen AI adds liquid know-how in $16 million Aquatic Labs acquisition",
+          "text": "Two startups tackling the data center water problem are joining forces in a $16 million deal.",
+          "published_at": "2026-11-02 15:00:00+00:00",
+          "prefilter": true
+        },
+        {
+          "url": "https://techcrunch.com/2026/11/02/ninjas-first-ever-microwave-just-replaced-two-of-my-kitchen-appliances-at-once/",
+          "title": "Ninja’s first-ever microwave just replaced two of my kitchen appliances at once",
+          "text": "The Ninja Crispi Microwave stands out for its FusionCrisp technology, which combines the speed of a microwave with the crispy results you'd expect from an air fryer.",
+          "published_at": "2026-11-02 14:42:38+00:00",
+          "prefilter": false
+        }
+      ],
+      "extraction": {
+        "url": "https://techcrunch.com/2026/11/02/omen-ai-adds-liquid-know-how-in-16-million-aquatic-labs-acquisition/",
+        "mode": "полный текст",
+        "chars": 3641,
+        "preview": "US data centers use 17 to 19 billion gallons of water to cool their hot-running chips each year — and that number is expected to to triple in the next five years, according to the Water Foundation.\nThat’s an expensive and politically tricky proposition for investors throwing billions of dollars at the challenge of scaling up AI. One way to use less"
+      }
+    },
+    {
+      "name": "Vulcan Post",
+      "url": "https://vulcanpost.com/feed/",
+      "ok": true,
+      "items": 10,
+      "oldest": "2026-10-23T02:54:53+00:00",
+      "newest": "2026-11-02T03:43:48+00:00",
+      "sample": [
+        {
+          "url": "https://vulcanpost.com/913609/ufit-singapore-gym/",
+          "title": "While S’pore gyms shut down, UFIT is making up to S$18M a year with just 4 outlets",
+          "text": "This year is its best in five years, says founder and CEO Dean Ahmad Amid a spate of gym closures, UFIT is bucking the trend. According to its CEO and founder, Dean Ahmad, 41, the homegrown health and fitness brand has generated between S$15-S$18 million in annual revenue every year since 2023, growing by almost […]",
+          "published_at": "2026-11-02 03:43:48+00:00",
+          "prefilter": true
+        },
+        {
+          "url": "https://vulcanpost.com/914165/zermatt-neo-new-restaurant-over/",
+          "title": "“Very exciting, very scary”: Zermatt Neo on opening his first restaurant in Singapore",
+          "text": "Zermatt Neo’s restaurant is giving out meals for free if you can finish its food challenges 8kg. 9kg. 10kg. For local competitive eater Zermatt Neo, 38, that is a normal amount of food to finish in one sitting—and it is also why people keep watching his videos. But you don’t have to eat like Zermatt […]",
+          "published_at": "2026-10-30 07:45:33+00:00",
+          "prefilter": false
+        }
+      ],
+      "extraction": {
+        "url": "https://vulcanpost.com/913609/ufit-singapore-gym/",
+        "mode": "полный текст",
+        "chars": 8583,
+        "preview": "This year is its best in five years, says founder and CEO Dean Ahmad\nAmid a spate of gym closures, UFIT is bucking the trend.\nAccording to its CEO and founder, Dean Ahmad, 41, the homegrown health and fitness brand has generated between S$15-S$18 million in annual revenue every year since 2023, growing by almost 10% year-on-year.\nThis year, he said"
+      }
+    },
+    {
+      "name": "OpenAI",
+      "url": "https://openai.com/news/rss.xml",
+      "ok": true,
+      "items": 300,
+      "oldest": "2026-06-01T10:00:00+00:00",
+      "newest": "2026-11-02T15:00:00+00:00",
+      "sample": [
+        {
+          "url": "https://openai.com/index/grid-protectors-program",
+          "title": "Introducing the Grid Protectors Program",
+          "text": "OpenAI’s Grid Protectors Program will work with utilities to help future compute campuses support grid reliability and protect consumer electricity costs.",
+          "published_at": "2026-11-02 15:00:00+00:00",
+          "prefilter": true
+        },
+        {
+          "url": "https://openai.com/index/helping-websites-express-ai-training-preferences",
+          "title": "Making it easier for websites to express AI training preferences",
+          "text": "OpenAI will honor a shared robots.txt signal to help website operators communicate their AI training preferences to participating providers.",
+          "published_at": "2026-10-30 09:30:00+00:00",
+          "prefilter": true
+        }
+      ],
+      "extraction": {
+        "url": "https://openai.com/index/grid-protectors-program",
+        "mode": "описание; полный текст недоступен",
+        "chars": 154,
+        "preview": "OpenAI’s Grid Protectors Program will work with utilities to help future compute campuses support grid reliability and protect consumer electricity costs."
+      }
+    },
+    {
+      "name": "Google",
+      "url": "https://blog.google/rss/",
+      "ok": true,
+      "items": 20,
+      "oldest": "2026-10-28T14:00:00+00:00",
+      "newest": "2026-10-30T20:15:00+00:00",
+      "sample": [
+        {
+          "url": "https://blog.google/products-and-platforms/devices/fitbit/google-fitbit-edge-on-shelves-now/",
+          "title": "Google Fitbit Edge: On shelves now",
+          "text": "Shop the new Google Fitbit Edge featuring a bright, large display and physical side buttons for easy control. Upgrade your fitness tracker today.",
+          "published_at": "2026-10-30 20:15:00+00:00",
+          "prefilter": true
+        },
+        {
+          "url": "https://blog.google/innovation-and-ai/models-and-research/google-research/project-suncatcher-satellite-response/",
+          "title": "We’ve received our first response from the Project Suncatcher prototype satellite.",
+          "text": "Video showing the Project Suncatcher team explaining the project and reacting to the TPU-generated haiku",
+          "published_at": "2026-10-30 17:00:00+00:00",
+          "prefilter": false
+        }
+      ],
+      "extraction": {
+        "url": "https://blog.google/products-and-platforms/devices/fitbit/google-fitbit-edge-on-shelves-now/",
+        "mode": "полный текст",
+        "chars": 377,
+        "preview": "Google Fitbit Edge: On shelves now\nOur latest fitness tracker, Google Fitbit Edge 1 , is designed to fit your lifestyle from workday to workout:\n- At-a-glance readability and all-day comfort\n- Our largest, brightest tracker display and new screen design 2\n- Physical side buttons for easier controls\n- Sculpted to contour to your wrist, with stylish "
+      }
+    },
+    {
+      "name": "Meta",
+      "url": "https://about.fb.com/feed/",
+      "ok": true,
+      "items": 10,
+      "oldest": "2026-10-13T16:00:29+00:00",
+      "newest": "2026-10-29T17:00:55+00:00",
+      "sample": [
+        {
+          "url": "https://about.fb.com/news/2026/10/lavenir-appartient-a-tous-meta-et-inca-sassocient-pour-soutenir-les-personnes-aveugles-sourdes-et-aveugles-ou-ayant-une-basse-vision-au-canada/",
+          "title": "L’avenir appartient à tous: Meta et INCA s’associent pour soutenir les personnes aveugles, sourdes et aveugles ou ayant une basse vision au Canada",
+          "text": "Nous croyons que l’avenir appartient à tous. C’est pourquoi Meta s’associe à INCA, un organisme à but non lucratif fondé en 1918 qui aide les personnes atteintes de cécité au Canada à réaliser leurs rê ves, afin de permettre à davantage de personnes aveugles, sourdes et aveugles ou ayant une basse vision au Canada de bénéficier des avantages des lu",
+          "published_at": "2026-10-29 17:00:55+00:00",
+          "prefilter": true
+        },
+        {
+          "url": "https://about.fb.com/news/2026/10/the-future-is-for-everyone-meta-and-cnib-partner-to-support-canadians-who-are-blind-deafblind-or-have-low-vision/",
+          "title": "The Future Is for Everyone: Meta and CNIB Partner to Support Canadians Who Are Blind, Deafblind or Have Low Vision",
+          "text": "We believe the future is for everyone. That’s why Meta is partnering with CNIB – a non-profit founded in 1918 that empowers Canadians impacted by blindness to live their dreams – to help bring the benefit of AI glasses to more Canadians who are blind, Deafblind or have low vision. The goal of the partnership is to help people who are blind, Deafbli",
+          "published_at": "2026-10-29 17:00:36+00:00",
+          "prefilter": true
+        }
+      ],
+      "extraction": {
+        "url": "https://about.fb.com/news/2026/10/lavenir-appartient-a-tous-meta-et-inca-sassocient-pour-soutenir-les-personnes-aveugles-sourdes-et-aveugles-ou-ayant-une-basse-vision-au-canada/",
+        "mode": "полный текст",
+        "chars": 4243,
+        "preview": "Nous croyons que l’avenir appartient à tous. C’est pourquoi Meta s’associe à INCA, un organisme à but non lucratif fondé en 1918 qui aide les personnes atteintes de cécité au Canada à réaliser leurs rê\nves, afin de permettre à davantage de personnes aveugles, sourdes et aveugles ou ayant une basse vision au Canada de bénéficier des avantages des lu"
+      }
+    },
+    {
+      "name": "Microsoft",
+      "url": "https://blogs.microsoft.com/feed/",
+      "ok": true,
+      "items": 10,
+      "oldest": "2026-09-17T14:00:05+00:00",
+      "newest": "2026-10-28T16:51:35+00:00",
+      "sample": [
+        {
+          "url": "https://blogs.microsoft.com/blog/2026/10/28/introducing-the-microsoft-copilot-harness-unlocking-the-potential-of-truly-multi-model-agentic-work/",
+          "title": "Introducing the Microsoft Copilot harness: Unlocking the potential of truly multi-model agentic work",
+          "text": "If you want to compete, you need to be multi-model. And if you want to take advantage of everything that different AI models have to offer, you need a great harness. But building one that works seamlessly across multiple models and surfaces is incredibly hard. You need to solve for performance, quality, and cost. And... The post Introducing the Mic",
+          "published_at": "2026-10-28 16:51:35+00:00",
+          "prefilter": true
+        },
+        {
+          "url": "https://blogs.microsoft.com/blog/2026/10/27/the-platform-approach-to-becoming-frontier/",
+          "title": "The platform approach to becoming Frontier",
+          "text": "Last year at Ignite, we introduced the concept of Frontier Transformation and how it is different from any technology-led pursuit, because it requires us to focus on business outcomes first. It starts with a simple idea: technology was invented to serve humanity, not the other way around. There is no path where this notion of... The post The platfo",
+          "published_at": "2026-10-27 16:01:38+00:00",
+          "prefilter": true
+        }
+      ],
+      "extraction": {
+        "url": "https://blogs.microsoft.com/blog/2026/10/28/introducing-the-microsoft-copilot-harness-unlocking-the-potential-of-truly-multi-model-agentic-work/",
+        "mode": "полный текст",
+        "chars": 4224,
+        "preview": "If you want to compete, you need to be multi-model. And if you want to take advantage of everything that different AI models have to offer, you need a great harness. But building one that works seamlessly across multiple models and surfaces is incredibly hard. You need to solve for performance, quality, and cost. And then you have to maintain it, w"
+      }
+    }
+  ],
+  "model": "openai/gpt-4.1-mini",
+  "price_per_token": [
+    "4E-7",
+    "0.0000016"
+  ]
+}

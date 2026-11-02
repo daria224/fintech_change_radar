@@ -1,0 +1,32 @@
+{
+  "rules_version": "fintech-v2.0",
+  "bot_username": "fintech_change_radar_desk_bot",
+  "history_days": 60,
+  "collect_hours": 6,
+  "digest_hour_moscow": 9,
+  "daily_budget_usd": "1.00",
+  "max_output_tokens": 1800,
+  "max_article_chars": 14000,
+  "max_feed_items": 300,
+  "sources": [
+    {"name": "Банки.ру", "url": "https://www.banki.ru/xml/news.rss"},
+    {"name": "Банк России", "url": "https://www.cbr.ru/rss/RssPress"},
+    {"name": "Хабр: Финансы", "url": "https://habr.com/ru/rss/hubs/finance/all/?limit=100"},
+    {"name": "Finextra", "url": "https://www.finextra.com/rss/headlines.aspx"},
+    {"name": "TechCrunch", "url": "https://techcrunch.com/feed/"},
+    {"name": "Vulcan Post", "url": "https://vulcanpost.com/feed/"},
+    {"name": "OpenAI", "url": "https://openai.com/news/rss.xml"},
+    {"name": "Google", "url": "https://blog.google/rss/"},
+    {"name": "Meta", "url": "https://about.fb.com/feed/"},
+    {"name": "Microsoft", "url": "https://blogs.microsoft.com/feed/"}
+  ],
+  "watchlist": {
+    "Россия": ["Сбер", "Т-Банк", "Альфа-Банк", "ВТБ", "Газпромбанк", "ПСБ", "Совкомбанк", "МТС Банк", "Ozon Банк", "Яндекс", "ЮMoney", "Wildberries"],
+    "СНГ": ["Kaspi.kz", "Halyk", "Freedom Bank", "ForteBank", "TBC Bank", "Bank of Georgia", "Uzum", "Click"],
+    "Мировые технологии": ["Meta", "X", "xAI", "Tesla", "Anthropic", "OpenAI", "Google", "Microsoft", "Apple", "Amazon", "NVIDIA", "Samsung", "Tencent", "Alibaba", "Ant Group", "ByteDance", "Baidu", "DeepSeek", "Mistral AI", "Perplexity", "Character.AI", "Replika", "Duolingo"],
+    "Международный финтех": ["Revolut", "Monzo", "N26", "Nubank", "Wise", "Klarna", "Stripe", "PayPal", "Block", "DBS", "KakaoBank", "WeBank", "Grab"]
+  },
+  "coverage_note": "Пилот: 10 RSS-лент. Нет гарантированного покрытия каждой компании, магазинов приложений и Telegram. История ограничена доступным архивом лент; отсутствие события в радаре не означает отсутствия изменений.",
+  "change_types": ["запуск", "функция", "тариф", "партнёрство", "сделка", "инвестиции", "пилот", "закрытие", "регулирование", "доступ", "интерфейс", "безопасность", "доверие"],
+  "mechanisms": ["платежи", "кредитование", "сбережения", "инвестиции", "AI-помощник", "идентификация", "антифрод", "подписка", "экосистема", "доступность", "обслуживание", "регулирование", "другое"]
+}

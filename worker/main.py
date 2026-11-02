@@ -1,149 +1,60 @@
-"""Worker: takes new materials from the database, asks the model, writes findings.
-
-This is the only place in the system where a model is called.
-"""
-
-import json
-import os
+import sys
 import time
-import urllib.request
+from datetime import UTC, datetime
 
 import db
-
-SERVICE = "worker"
-MODEL = os.environ.get("MODEL", "anthropic/claude-haiku-5.5")
-PROMPT_VERSION = "v1"
-POLL_SECONDS = 10
-RETRY_SECONDS = 3600
-
-ENTITIES = [
-    "OpenAI",
-    "Anthropic",
-    "Google",
-    "Meta",
-    "Microsoft",
-    "Apple",
-    "Nvidia",
-    "DeepSeek",
-    "Mistral",
-    "xAI",
-    "Яндекс",
-    "Сбер",
-]
-
-PROMPT = """Ты помогаешь вести desk research по рынку разговоров об искусственном интеллекте.
-Материал:
-Заголовок: {title}
-Текст: {text}
-
-Ответь строго JSON без пояснений:
-{{"about_ai": true или false — материал про искусственный интеллект,
-  "entity": одна компания из списка {entities}, о которой материал, или null,
-  "summary": "о чем материал, одна короткая фраза по-русски"}}"""
+from radar_core.analysis import process
+from radar_core.collect import collect
+from radar_core.config import CONFIG
 
 
-def ask_model(title, text):
-    body = {
-        "model": MODEL,
-        "messages": [
-            {
-                "role": "user",
-                "content": PROMPT.format(
-                    title=title, text=(text or "")[:2000], entities=", ".join(ENTITIES)
-                ),
-            }
-        ],
-        "response_format": {"type": "json_object"},
-    }
-    req = urllib.request.Request(
-        "https://openrouter.ai/api/v1/chat/completions",
-        data=json.dumps(body).encode(),
-        headers={
-            "Authorization": f"Bearer {os.environ['OPENROUTER_API_KEY']}",
-            "Content-Type": "application/json",
-        },
-    )
-    with urllib.request.urlopen(req, timeout=60) as resp:
-        content = json.loads(resp.read())["choices"][0]["message"]["content"]
-    content = (
-        content.strip().removeprefix("```json").removeprefix("```").removesuffix("```")
-    )
-    return json.loads(content)
-
-
-def process_new(conn):
-    pending = conn.execute(
-        "SELECT id, title, text FROM materials WHERE status = 'new' ORDER BY id"
-    ).fetchall()
-    if not pending:
+def tick(conn):
+    now = datetime.now(UTC)
+    slot = now.strftime("%Y-%m-%d") + ":" + str(now.hour // CONFIG["collect_hours"])
+    if not conn.execute("SELECT pg_try_advisory_lock(4213)").fetchone()[0]:
         return
-    run_id = db.start_run(conn, SERVICE)
-    found = 0
-    for done, (material_id, title, text) in enumerate(pending, 1):
-        try:
-            answer = ask_model(title, text)
-        except Exception as error:
+    try:
+        job = conn.execute(
+            "SELECT state,updated_at<now()-interval '30 minutes' FROM radar_jobs WHERE job='collect' AND slot=%s",
+            (slot,),
+        ).fetchone()
+        if not job or (job[0] != "done" and job[1]):
             conn.execute(
-                "UPDATE materials SET status = 'failed' WHERE id = %s", (material_id,)
+                "INSERT INTO radar_jobs(job,slot) VALUES ('collect',%s) ON CONFLICT(job,slot) DO UPDATE SET updated_at=now()",
+                (slot,),
             )
-            db.log(SERVICE, f"материал {material_id}: модель не ответила: {error}")
-            continue
-        if answer.get("about_ai"):
-            entity = answer.get("entity") if answer.get("entity") in ENTITIES else None
+            first = not conn.execute(
+                "SELECT 1 FROM radar_meta WHERE key='backfill_done'"
+            ).fetchone()
+            collect(conn, historical=first)
             conn.execute(
-                """INSERT INTO findings (material_id, entity, summary, model, prompt_version)
-                   VALUES (%s, %s, %s, %s, %s) ON CONFLICT (material_id) DO NOTHING""",
-                (material_id, entity, answer["summary"], MODEL, PROMPT_VERSION),
+                "INSERT INTO radar_meta VALUES ('backfill_done',now()::text) ON CONFLICT DO NOTHING"
             )
             conn.execute(
-                "UPDATE materials SET status = 'done' WHERE id = %s", (material_id,)
+                "UPDATE radar_jobs SET state='done',updated_at=now() WHERE job='collect' AND slot=%s",
+                (slot,),
             )
-            found += 1
-            db.log(
-                SERVICE,
-                f"материал {material_id} -> находка ({entity or 'без компании'}): {answer['summary']}",
-            )
-        else:
-            conn.execute(
-                "UPDATE materials SET status = 'skipped' WHERE id = %s", (material_id,)
-            )
-            db.log(SERVICE, f"материал {material_id} не про AI, пропускаю")
-        if done % 10 == 0:
-            db.progress_run(
-                conn, SERVICE, run_id, found, f"разобрано {done} из {len(pending)}"
-            )
-    db.finish_run(
-        conn, SERVICE, run_id, found, f"разобрано {len(pending)}, находок {found}"
-    )
-
-
-def retry_failed(conn):
-    retried = conn.execute(
-        "UPDATE materials SET status = 'new' WHERE status = 'failed'"
-    ).rowcount
-    if retried:
-        db.log(
-            SERVICE,
-            f"вернул в разбор {retried} материалов, на которых модель не ответила",
-        )
+    finally:
+        conn.execute("SELECT pg_advisory_unlock(4213)")
+    process(conn)
 
 
 def main():
-    conn = db.connect()
-    db.init_schema(conn)
-    db.log(SERVICE, f"жду новые материалы в базе, модель {MODEL}")
-    last_retry = float("-inf")
+    if "--once" in sys.argv:
+        with db.connect() as conn:
+            db.init_schema(conn)
+            tick(conn)
+        return
     while True:
         try:
-            # materials the model failed on go back into the queue once an hour
-            if time.monotonic() - last_retry >= RETRY_SECONDS:
-                retry_failed(conn)
-                last_retry = time.monotonic()
-            process_new(conn)
-        except Exception as error:
-            db.log(SERVICE, f"упал: {error}")
-            conn = db.connect()
-        time.sleep(POLL_SECONDS)
+            with db.connect() as conn:
+                db.init_schema(conn)
+                while True:
+                    tick(conn)
+                    time.sleep(30)
+        except Exception as exc:
+            db.log("worker", f"Ошибка: {type(exc).__name__}; повтор через 30 с")
+            time.sleep(30)
 
 
 if __name__ == "__main__":

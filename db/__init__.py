@@ -20,7 +20,23 @@ def init_schema(conn):
     # blocks start at the same time on a fresh database; the lock lets one create the tables
     conn.execute("SELECT pg_advisory_lock(%s)", (SCHEMA_LOCK,))
     try:
-        conn.execute(SCHEMA.read_text())
+        with conn.transaction():
+            conn.execute(SCHEMA.read_text(encoding="utf-8"))
+            conn.execute(SCHEMA.with_name("radar.sql").read_text(encoding="utf-8"))
+            from radar_core.config import CONFIG
+
+            if not conn.execute("SELECT 1 FROM radar_meta WHERE key='installed'").fetchone():
+                conn.execute("UPDATE sources SET active=false")
+                conn.execute("INSERT INTO radar_meta VALUES ('installed', now()::text)")
+            for source in CONFIG["sources"]:
+                conn.execute(
+                    "INSERT INTO sources(name,kind,url,active) VALUES (%s,'rss',%s,true) ON CONFLICT(name) DO UPDATE SET url=excluded.url,active=true",
+                    (source["name"], source["url"]),
+                )
+            conn.execute(
+                "UPDATE sources SET active=false WHERE NOT(name=ANY(%s))",
+                ([s["name"] for s in CONFIG["sources"]],),
+            )
     finally:
         conn.execute("SELECT pg_advisory_unlock(%s)", (SCHEMA_LOCK,))
 

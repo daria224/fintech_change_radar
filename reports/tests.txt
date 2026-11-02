@@ -1,0 +1,32 @@
+test_bad_model_and_deferred_budget (tests.test_radar.DatabaseTests.test_bad_model_and_deferred_budget) ... ok
+test_blocked_and_rate_limited_delivery (tests.test_radar.DatabaseTests.test_blocked_and_rate_limited_delivery) ... ok
+test_bot_start_preserves_subscription_and_status (tests.test_radar.DatabaseTests.test_bot_start_preserves_subscription_and_status) ... ok
+test_budget_is_shared_and_persistent (tests.test_radar.DatabaseTests.test_budget_is_shared_and_persistent) ... ok
+test_chain_merge_feed_and_legacy_isolation (tests.test_radar.DatabaseTests.test_chain_merge_feed_and_legacy_isolation) ... ok
+test_collection_repeat_history_and_source_failures (tests.test_radar.DatabaseTests.test_collection_repeat_history_and_source_failures) ... ok
+test_collection_schedule_runs_once_per_slot (tests.test_radar.DatabaseTests.test_collection_schedule_runs_once_per_slot) ... ok
+test_concurrent_budget_reservations (tests.test_radar.DatabaseTests.test_concurrent_budget_reservations) ... ok
+test_digest_clock_snapshot_and_recipient_restart (tests.test_radar.DatabaseTests.test_digest_clock_snapshot_and_recipient_restart) ... ok
+test_fresh_event_enters_digest_once (tests.test_radar.DatabaseTests.test_fresh_event_enters_digest_once) ... ok
+test_history_never_becomes_fresh (tests.test_radar.DatabaseTests.test_history_never_becomes_fresh) ... ok
+test_http_feed_and_health_without_bot_token (tests.test_radar.DatabaseTests.test_http_feed_and_health_without_bot_token) ... ok
+test_malformed_response_is_charged_and_rejected (tests.test_radar.DatabaseTests.test_malformed_response_is_charged_and_rejected) ... ok
+test_missing_cost_retains_upper_bound (tests.test_radar.DatabaseTests.test_missing_cost_retains_upper_bound) ... ok
+test_no_key_defers_without_spending_or_consuming_retries (tests.test_radar.DatabaseTests.test_no_key_defers_without_spending_or_consuming_retries) ... ok
+test_paid_error_keeps_reservation (tests.test_radar.DatabaseTests.test_paid_error_keeps_reservation) ... ok
+test_repeatable_migration_preserves_legacy_and_subscribers (tests.test_radar.DatabaseTests.test_repeatable_migration_preserves_legacy_and_subscribers) ... ok
+test_20_labeled_prefilter_cases (tests.test_radar.PureTests.test_20_labeled_prefilter_cases) ... ok
+test_article_failure_is_explicit (tests.test_radar.PureTests.test_article_failure_is_explicit) ... ok
+test_diversity_and_no_padding (tests.test_radar.PureTests.test_diversity_and_no_padding) ... ok
+test_merge_cannot_cross_companies (tests.test_radar.PureTests.test_merge_cannot_cross_companies) ... ok
+test_rss_atom_and_invalid_dates (tests.test_radar.PureTests.test_rss_atom_and_invalid_dates) ... ok
+test_signal_requires_events_companies_and_different_evidence (tests.test_radar.PureTests.test_signal_requires_events_companies_and_different_evidence) ... ok
+test_unknown_price_never_calls_paid_endpoint (tests.test_radar.PureTests.test_unknown_price_never_calls_paid_endpoint) ... ok
+test_url_and_html (tests.test_radar.PureTests.test_url_and_html) ... ok
+test_validation_and_grounding (tests.test_radar.PureTests.test_validation_and_grounding) ... ok
+test_wrong_bot_identity_is_rejected_before_changes (tests.test_radar.PureTests.test_wrong_bot_identity_is_rejected_before_changes) ... ok
+
+----------------------------------------------------------------------
+Ran 27 tests in 1.166s
+
+OK

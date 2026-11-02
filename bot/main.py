@@ -1,32 +1,23 @@
-"""Bot: Telegram bot and a Mini App with the findings.
-
-- remembers everyone who pressed Start (table subscribers);
-- after each collection is sorted by the worker, sends one summary to subscribers and marks findings.sent_at;
-- answers /start and /status;
-- serves the Mini App page on PORT, the bot opens it inside Telegram.
-"""
+"""Existing Telegram identity and subscribers; daily digest and card feed."""
 
 import html
 import json
 import os
 import threading
 import time
-import urllib.error
 import urllib.request
-from datetime import datetime, timezone
+from datetime import datetime
+from decimal import Decimal
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
-from pathlib import Path
 
 import db
+from radar_core.config import CONFIG, MSK
+from radar_core.digest import coverage, deliver, event_rows, signal
 
 SERVICE = "bot"
-HERE = Path(__file__).resolve().parent
-SEND_EVERY_SECONDS = 60
-LATEST = 5  # findings listed in the summary, the rest are in the feed
-
 COMMANDS = [
-    {"command": "start", "description": "подписаться на находки"},
-    {"command": "status", "description": "что было в последних прогонах"},
+    {"command": "start", "description": "подписаться на утреннюю сводку"},
+    {"command": "status", "description": "проверить сбор и бюджет"},
 ]
 
 
@@ -35,32 +26,26 @@ def setting(name):
 
 
 def page_url():
-    """Address of the Mini App: set by hand or taken from the platform (Railway, Coolify)."""
-    url = (
-        setting("MINI_APP_URL")
-        or setting("RAILWAY_PUBLIC_DOMAIN")
-        or setting("COOLIFY_URL")
-    )
+    url = setting("MINI_APP_URL") or setting("RAILWAY_PUBLIC_DOMAIN") or setting("COOLIFY_URL")
     if not url:
         return ""
-    url = url.split(",")[0].strip()  # Coolify lists several domains separated by commas
+    url = url.split(",")[0].strip()
     if not url.startswith("http"):
-        url = f"https://{url}"
+        url = "https://" + url
     return url.rstrip("/") + "/"
 
 
-# ---------- Telegram ----------
-
-
 def api(method, payload=None, timeout=20):
-    base = setting("TELEGRAM_API") or "https://api.telegram.org"
-    request = urllib.request.Request(
-        f"{base}/bot{setting('TELEGRAM_TOKEN')}/{method}",
+    req = urllib.request.Request(
+        f"{setting('TELEGRAM_API') or 'https://api.telegram.org'}/bot{setting('TELEGRAM_TOKEN')}/{method}",
         data=json.dumps(payload or {}).encode(),
         headers={"Content-Type": "application/json"},
     )
-    with urllib.request.urlopen(request, timeout=timeout) as response:
-        return json.loads(response.read())["result"]
+    with urllib.request.urlopen(req, timeout=timeout) as r:
+        result = json.loads(r.read())
+    if not result.get("ok"):
+        raise ValueError("Telegram отклонил запрос")
+    return result["result"]
 
 
 def say(chat_id, text, button=True):
@@ -72,25 +57,15 @@ def say(chat_id, text, button=True):
     }
     if button and page_url():
         payload["reply_markup"] = {
-            "inline_keyboard": [
-                [{"text": "Открыть ленту", "web_app": {"url": page_url()}}]
-            ]
+            "inline_keyboard": [[{"text": "Открыть ленту", "web_app": {"url": page_url()}}]]
         }
-    api("sendMessage", payload)
-
-
-def finding_lines(rows):
-    lines = []
-    for summary, entity, url, source in rows:
-        line = f'• <a href="{html.escape(url)}">{html.escape(summary)}</a>\n  {html.escape(source)}'
-        if entity:
-            line += f" · {html.escape(entity)}"
-        lines.append(line)
-    return lines
+    return api("sendMessage", payload)
 
 
 def setup(conn):
-    """Menu commands, the permanent page button, and a starting point for sending."""
+    me = api("getMe")
+    if me["username"].casefold() != CONFIG["bot_username"].casefold():
+        raise ValueError("Токен относится к другому боту; проверьте настройки приложения")
     api("setMyCommands", {"commands": COMMANDS})
     if page_url():
         api(
@@ -103,85 +78,46 @@ def setup(conn):
                 }
             },
         )
-    # before the first subscriber, old findings count as sent: the bot pushes only what comes later
-    if not conn.execute("SELECT 1 FROM subscribers LIMIT 1").fetchone():
-        marked = conn.execute(
-            "UPDATE findings SET sent_at = now() WHERE sent_at IS NULL"
-        ).rowcount
-        if marked:
-            db.log(
-                SERVICE,
-                f"подписчиков нет, {marked} старых находок лежат в ленте, рассылать их не буду",
-            )
-    me = api("getMe")
-    db.log(SERVICE, f"@{me['username']} на связи, лента {page_url() or 'без адреса'}")
-
-
-def send_new(conn):
-    """One message per collection: waits until the worker has sorted it, then sends a summary to every subscriber."""
-    # the worker is still busy while materials wait in the queue or the collector is running
-    busy = conn.execute(
-        "SELECT EXISTS (SELECT 1 FROM materials WHERE status = 'new')"
-        " OR EXISTS (SELECT 1 FROM runs WHERE service = 'collector' AND status IN ('started', 'running')"
-        "            AND started_at > now() - interval '30 minutes')"
-    ).fetchone()[0]
-    if busy:
-        return
-    subscribers = [row[0] for row in conn.execute("SELECT chat_id FROM subscribers")]
-    ids = [row[0] for row in conn.execute("SELECT id FROM findings WHERE sent_at IS NULL")]
-    if not subscribers or not ids:
-        return
-    companies = conn.execute(
-        "SELECT coalesce(entity, 'без компании'), count(*) FROM findings WHERE id = ANY(%s)"
-        " GROUP BY entity ORDER BY entity IS NULL, count(*) DESC",
-        (ids,),
-    ).fetchall()
-    latest = conn.execute(
-        "SELECT f.summary, f.entity, m.url, s.name FROM findings f"
-        " JOIN materials m ON m.id = f.material_id JOIN sources s ON s.id = m.source_id"
-        " WHERE f.id = ANY(%s) ORDER BY f.id DESC LIMIT %s",
-        (ids, LATEST),
-    ).fetchall()
-    text = f"<b>Новых находок: {len(ids)}</b>\n" + " · ".join(f"{html.escape(name)} {count}" for name, count in companies)
-    text += "\n\nСвежие:\n\n" + "\n\n".join(finding_lines(latest))
-    if len(ids) > LATEST:
-        text += f"\n\nЕще {len(ids) - LATEST} в ленте."
-    run_id = db.start_run(conn, SERVICE)
-    delivered = 0
-    for chat_id in subscribers:
-        try:
-            say(chat_id, text)
-            delivered += 1
-        except urllib.error.HTTPError as error:
-            if error.code == 403:  # the person blocked the bot
-                conn.execute("DELETE FROM subscribers WHERE chat_id = %s", (chat_id,))
-            db.log(SERVICE, f"чат {chat_id}: не доставлено, ответ {error.code}")
-    conn.execute("UPDATE findings SET sent_at = now() WHERE id = ANY(%s)", (ids,))
-    db.finish_run(conn, SERVICE, run_id, len(ids), f"сводка по {len(ids)} находкам, получили {delivered} из {len(subscribers)}")
+    db.log(SERVICE, f"@{me['username']}: сводка в 09:00 МСК")
 
 
 def status_text(conn):
-    lines = []
-    for service, name in (
-        ("collector", "Сбор"),
-        ("worker", "Разбор"),
-        ("bot", "Рассылка"),
-    ):
+    lines = ["<b>Радар изменений</b> · 09:00 МСК\n", html.escape(coverage(conn))]
+    for service, name in [("collector", "Сбор"), ("worker", "Анализ")]:
         run = conn.execute(
-            "SELECT started_at, status, note FROM runs WHERE service = %s ORDER BY id DESC LIMIT 1",
+            "SELECT status,started_at,note FROM runs WHERE service=%s ORDER BY id DESC LIMIT 1",
             (service,),
         ).fetchone()
         if run:
-            state = {"finished": "завершен", "failed": "упал"}.get(run[1], "идет")
+            state = {
+                "finished": "завершён",
+                "failed": "ошибка",
+                "started": "начат",
+                "running": "идёт",
+            }.get(run[0], run[0])
             lines.append(
-                f"{name}: {run[0].astimezone(timezone.utc):%d.%m %H:%M} UTC, {state}. {html.escape(run[2] or '')}"
+                f"{name}: {state}, {run[1].astimezone(MSK):%d.%m %H:%M} МСК. "
+                + html.escape(run[2] or "")
             )
-        else:
-            lines.append(f"{name}: еще не было")
-    findings, subscribers = conn.execute(
-        "SELECT (SELECT count(*) FROM findings), (SELECT count(*) FROM subscribers)"
-    ).fetchone()
-    lines.append(f"\nВсего находок {findings}, подписчиков {subscribers}.")
+    day = datetime.now(MSK).date()
+    used = conn.execute(
+        "SELECT coalesce(sum(coalesce(actual,reserved)),0) FROM radar_spend WHERE budget_day=%s",
+        (day,),
+    ).fetchone()[0]
+    pending = conn.execute(
+        "SELECT count(*) FROM materials WHERE radar_version IS NOT NULL AND status IN ('new','failed','deferred')"
+    ).fetchone()[0]
+    ambiguous = conn.execute(
+        "SELECT count(*) FROM radar_deliveries WHERE state IN ('sending','uncertain')"
+    ).fetchone()[0]
+    lines += [
+        f"Бюджет сегодня: ${used:.4f} / ${Decimal(CONFIG['daily_budget_usd']):.2f}. Ожидают анализа: {pending}.",
+        f"Доставок с неясным результатом: {ambiguous}.",
+        html.escape(CONFIG["coverage_note"]),
+    ]
+    state = conn.execute("SELECT value FROM radar_meta WHERE key='analysis_state'").fetchone()
+    if state:
+        lines.append(html.escape(state[0]))
     return "\n".join(lines)
 
 
@@ -194,175 +130,129 @@ def handle(conn, message):
     if command == "/start":
         name = chat.get("username") or chat.get("first_name") or ""
         conn.execute(
-            "INSERT INTO subscribers (chat_id, name) VALUES (%s, %s) ON CONFLICT (chat_id) DO NOTHING",
+            "INSERT INTO subscribers(chat_id,name) VALUES (%s,%s) ON CONFLICT(chat_id) DO UPDATE SET active=true",
             (chat["id"], name),
         )
-        latest = conn.execute(
-            "SELECT f.summary, f.entity, m.url, s.name FROM findings f"
-            " JOIN materials m ON m.id = f.material_id JOIN sources s ON s.id = m.source_id ORDER BY f.id DESC LIMIT 5"
-        ).fetchall()
-        text = "Готово, вы подписаны. После каждого сбора пришлю сюда одну сводку: сколько новых находок и по каким компаниям."
-        if latest:
-            text += "\n\nПоследние:\n\n" + "\n\n".join(finding_lines(latest))
-        text += "\n\nВсе находки в ленте: кнопка ниже или «Лента» рядом с полем ввода. /status покажет, как работают блоки."
-        say(chat["id"], text)
-        db.log(SERVICE, f"новый подписчик {name or chat['id']}")
+        say(
+            chat["id"],
+            "Вы подписаны на радар изменений. Каждый день в 09:00 по Москве — до пяти важных событий и общий сигнал, если есть основания. Полные карточки и история доступны в ленте. /status — состояние сбора и анализа.",
+        )
     elif command == "/status":
         say(chat["id"], status_text(conn))
     else:
-        say(chat["id"], "Я понимаю /start и /status. Находки в ленте:")
+        say(
+            chat["id"],
+            "Команды: /start — подписка, /status — состояние. Карточки — по кнопке «Открыть ленту».",
+        )
 
 
-def poll_forever():
-    """Long polling: asks Telegram for new messages and answers them."""
-    offset = None
-    while True:
-        try:
-            updates = api(
-                "getUpdates",
-                {"timeout": 30, "offset": offset, "allowed_updates": ["message"]},
-                timeout=40,
-            )
-            if updates:
-                with db.connect() as conn:
-                    for update in updates:
-                        offset = update["update_id"] + 1
-                        if "message" in update:
-                            handle(conn, update["message"])
-        except urllib.error.HTTPError as error:
-            if error.code == 409:
-                # Telegram gives updates to one program at a time
-                db.log(SERVICE, "409: этот токен уже слушает другая программа, бот ждет, пока она остановится")
-            else:
-                db.log(SERVICE, f"ошибка связи с Telegram: ответ {error.code}")
-            time.sleep(5)
-        except Exception as error:
-            db.log(SERVICE, f"ошибка связи с Telegram: {error}")
-            time.sleep(5)
-
-
-def send_forever():
+def loop():
     while True:
         try:
             with db.connect() as conn:
-                send_new(conn)
-        except Exception as error:
-            db.log(SERVICE, f"рассылка не прошла: {error}")
-        time.sleep(SEND_EVERY_SECONDS)
+                if not conn.execute("SELECT pg_try_advisory_lock(4215)").fetchone()[0]:
+                    time.sleep(30)
+                    continue
+                setup(conn)
+                last_send = 0
+                while True:
+                    offset = conn.execute(
+                        "SELECT value FROM radar_meta WHERE key='telegram_offset'"
+                    ).fetchone()
+                    updates = api(
+                        "getUpdates",
+                        {
+                            "timeout": 25,
+                            "offset": int(offset[0]) if offset else None,
+                            "allowed_updates": ["message"],
+                        },
+                        timeout=35,
+                    )
+                    for update in updates:
+                        if "message" in update:
+                            handle(conn, update["message"])
+                        conn.execute(
+                            "INSERT INTO radar_meta(key,value) VALUES ('telegram_offset',%s) ON CONFLICT(key) DO UPDATE SET value=excluded.value",
+                            (str(update["update_id"] + 1),),
+                        )
+                    if time.monotonic() - last_send > 45:
+                        deliver(conn, say)
+                        last_send = time.monotonic()
+        except Exception as exc:
+            # Never log Telegram request URLs: they embed the bot token.
+            db.log(SERVICE, f"Ошибка связи: {type(exc).__name__}; повтор через 10 с")
+            time.sleep(10)
 
 
-# ---------- Mini App page ----------
-
-
-def iso(moment):
-    return (
-        moment.astimezone(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
-        if moment
-        else None
-    )
-
-
-def page_data(conn):
-    fields = (
-        "id",
-        "material_id",
-        "summary",
-        "reason",
-        "title",
-        "url",
-        "date",
-        "run_id",
-        "source_id",
-        "source",
-        "source_url",
-        "text",
-        "sent_at",
-        "model",
-    )
-    findings = []
-    for row in conn.execute(
-        "SELECT f.id, m.id, f.summary, f.entity, m.title, m.url, coalesce(m.published_at, m.collected_at), m.run_id,"
-        " s.id, s.name, s.url, left(m.text, 600), f.sent_at, f.model"
-        " FROM findings f JOIN materials m ON m.id = f.material_id JOIN sources s ON s.id = m.source_id"
-        " ORDER BY f.id DESC LIMIT 300"
-    ):
-        finding = dict(zip(fields, row))
-        finding["date"], finding["sent_at"] = (
-            iso(finding["date"]),
-            iso(finding["sent_at"]),
+def render_page(conn, archive=False):
+    esc = html.escape
+    header = """<!doctype html><html lang="ru"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+    <title>Fintech Change Radar</title><style>body{font:16px/1.6 system-ui,sans-serif;background:#f6f5f1;color:#172b28;margin:0}main{max-width:880px;margin:auto;padding:24px 18px}article{background:white;padding:24px;margin:22px 0;border:1px solid #d6dcd5;border-radius:10px}a{color:#176b58}h1,h2,h3{line-height:1.25}h2{font-size:23px}h3{font-size:16px;margin-bottom:4px}p{margin-top:6px}.meta,small{color:#58655e}blockquote{margin:12px 0;padding-left:16px;border-left:3px solid #a6bbb1}nav{display:flex;gap:24px}</style><main>
+    <h1>Радар изменений</h1><nav><a href="/">События</a><a href="/archive">Архив AI-находок</a></nav>"""
+    parts = [header]
+    if archive:
+        parts.append(
+            "<p>Архив прежнего проекта. Эти находки не участвуют в новом радаре и рассылках.</p>"
         )
-        findings.append(finding)
-
-    run = conn.execute(
-        "SELECT id, finished_at, status, items FROM runs WHERE service = 'collector' AND status <> 'started'"
-        " ORDER BY id DESC LIMIT 1"
-    ).fetchone()
-    run_info, sources = None, []
-    if run:
-        statuses = dict(
-            conn.execute(
-                "SELECT status, count(*) FROM materials WHERE run_id = %s GROUP BY status",
-                (run[0],),
-            ).fetchall()
-        )
-        added = sum(statuses.values())
-        kept = conn.execute(
-            "SELECT count(*) FROM findings f JOIN materials m ON m.id = f.material_id WHERE m.run_id = %s",
-            (run[0],),
-        ).fetchone()[0]
-        sent = conn.execute(
-            "SELECT count(*) FROM findings f JOIN materials m ON m.id = f.material_id"
-            " WHERE m.run_id = %s AND f.sent_at IS NOT NULL",
-            (run[0],),
-        ).fetchone()[0]
-        run_info = {
-            "id": run[0],
-            "finished_at": iso(run[1]),
-            "status": run[2],
-            "added": added,
-            "processed": statuses.get("done", 0)
-            + statuses.get("skipped", 0)
-            + statuses.get("failed", 0),
-            "kept": kept,
-            "skipped": statuses.get("skipped", 0),
-            "failed": statuses.get("failed", 0),
-            "waiting": statuses.get("new", 0),
-            "sent": sent,
-        }
-        sources = [
-            {"name": name, "new": new}
-            for name, new in conn.execute(
-                "SELECT s.name, count(m.id) FROM sources s"
-                " LEFT JOIN materials m ON m.source_id = s.id AND m.run_id = %s WHERE s.active GROUP BY s.id ORDER BY s.id",
-                (run[0],),
+        for summary, entity, url in conn.execute(
+            "SELECT f.summary,f.entity,m.url FROM findings f JOIN materials m ON m.id=f.material_id ORDER BY f.id DESC LIMIT 300"
+        ):
+            parts.append(
+                f'<article><h2>{esc(entity or "Без компании")}</h2><p>{esc(summary)}</p><a href="{esc(url, quote=True)}" rel="noopener noreferrer">Источник</a></article>'
             )
-        ]
-    totals = dict(
-        zip(
-            ("sources", "materials", "findings", "runs", "subscribers"),
-            conn.execute(
-                "SELECT (SELECT count(*) FROM sources WHERE active), (SELECT count(*) FROM materials),"
-                " (SELECT count(*) FROM findings), (SELECT count(*) FROM runs), (SELECT count(*) FROM subscribers)"
-            ).fetchone(),
+    else:
+        parts.append(
+            "<p>" + esc(CONFIG["coverage_note"]) + "</p><p>" + esc(coverage(conn)) + "</p>"
         )
-    )
-    return {
-        "generated_at": datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M"),
-        "totals": totals,
-        "run": run_info,
-        "sources": sources,
-        "findings": findings,
-    }
-
-
-def render_page(conn):
-    page = (
-        (HERE / "template.html")
-        .read_text(encoding="utf-8")
-        .replace("/*BRAND*/", (HERE / "brand.css").read_text(encoding="utf-8"))
-    )
-    payload = json.dumps(page_data(conn), ensure_ascii=False).replace("</", "<\\/")
-    return page.replace("/*DATA*/null/*END*/", payload)
+        events = event_rows(
+            conn,
+            "WHERE e.created_at>now()-interval '60 days' ORDER BY e.id DESC LIMIT 300",
+        )
+        common = signal(events)
+        if common:
+            parts.append(
+                "<article><h2>Общий сигнал</h2><p>"
+                + esc(common["text"])
+                + "</p><p>Основания: "
+                + ", ".join(f'<a href="#{i}">Событие №{i}</a>' for i in common["event_ids"])
+                + "</p></article>"
+            )
+        if not events:
+            parts.append(
+                "<p>Карточек пока нет. Сбор и анализ могут продолжаться; состояние доступно через /status в боте.</p>"
+            )
+        for e in events:
+            c = e["card"]
+            eid = e["id"]
+            parts.append(
+                f'<article id="{eid}"><small>Событие №{eid} · {"История" if e["historical"] else "Новое событие"}</small><h2>{esc(c["title"])}</h2><p class="meta">{esc(e["company"])} · {esc(c["market"])} · {e["event_date"] or "Дата события не установлена"} · {esc(c["change_type"])}</p>'
+            )
+            if not common or eid not in common["event_ids"]:
+                parts.append(
+                    '<p class="meta">Ранний сигнал: отдельное событие; распространение механики не подтверждено.</p>'
+                )
+            for label, key in [
+                ("Подтверждённые факты", "facts"),
+                ("Что это может значить для банка", "interpretation"),
+                ("Гипотеза для проверки", "hypothesis"),
+                ("Ограничения и неопределённость", "limitations"),
+                ("Исследовательский вопрос", "research_question"),
+            ]:
+                parts.append(f"<h3>{label}</h3><p>{esc(c[key])}</p>")
+            parts.append(
+                "<p><b>Рекомендация:</b> " + esc(c["recommendation"]) + "</p><h3>Основания</h3>"
+            )
+            for url, title, quote, mode in conn.execute(
+                "SELECT m.url,m.title,v.quote,m.content_mode FROM radar_evidence v JOIN materials m ON m.id=v.material_id WHERE v.event_id=%s ORDER BY m.id",
+                (eid,),
+            ):
+                parts.append(
+                    f'<p><a href="{esc(url, quote=True)}" rel="noopener noreferrer">{esc(title)}</a><br><small>{esc(mode)}</small></p><blockquote>{esc(quote)}</blockquote>'
+                )
+            parts.append(
+                f"<small>Модель: {esc(e['model'])} · Правила: {esc(e['rules_version'])}</small></article>"
+            )
+    return "".join(parts) + "</main></html>"
 
 
 class Handler(BaseHTTPRequestHandler):
@@ -372,21 +262,25 @@ class Handler(BaseHTTPRequestHandler):
             with db.connect() as conn:
                 if path == "/health":
                     conn.execute("SELECT 1")
-                    body, status, kind = b"ok", 200, "text/plain"
-                elif path == "/":
-                    body, status, kind = (
-                        render_page(conn).encode("utf-8"),
+                    body, code, kind = b"ok", 200, "text/plain"
+                elif path in ("/", "/archive"):
+                    body, code, kind = (
+                        render_page(conn, path == "/archive").encode(),
                         200,
                         "text/html; charset=utf-8",
                     )
                 else:
-                    body, status, kind = b"not found", 404, "text/plain"
-        except Exception as error:
-            db.log(SERVICE, f"страница не собралась: {error}")
-            body, status, kind = b"database unavailable", 503, "text/plain"
-        self.send_response(status)
+                    body, code, kind = b"not found", 404, "text/plain"
+        except Exception:
+            body, code, kind = (
+                "Лента временно недоступна".encode(),
+                503,
+                "text/plain; charset=utf-8",
+            )
+        self.send_response(code)
         self.send_header("Content-Type", kind)
         self.send_header("Cache-Control", "no-store")
+        self.send_header("X-Content-Type-Options", "nosniff")
         self.end_headers()
         self.wfile.write(body)
 
@@ -397,19 +291,10 @@ class Handler(BaseHTTPRequestHandler):
 def main():
     with db.connect() as conn:
         db.init_schema(conn)
-        if setting("TELEGRAM_TOKEN"):
-            try:
-                setup(conn)
-            except Exception as error:
-                db.log(SERVICE, f"не настроил бота: {error}")
     if setting("TELEGRAM_TOKEN"):
-        threading.Thread(target=poll_forever, daemon=True).start()
-        threading.Thread(target=send_forever, daemon=True).start()
-    else:
-        db.log(
-            SERVICE,
-            "переменная TELEGRAM_TOKEN пустая: бот молчит, работает только лента",
-        )
-    port = int(os.environ.get("PORT", "8080"))
-    db.log(SERVICE, f"лента открыта на порту {port}")
-    ThreadingHTTPServer(("0.0.0.0", port), Handler).serve_forever()
+        threading.Thread(target=loop, daemon=True).start()
+    ThreadingHTTPServer(("0.0.0.0", int(os.environ.get("PORT", "8080"))), Handler).serve_forever()
+
+
+if __name__ == "__main__":
+    main()

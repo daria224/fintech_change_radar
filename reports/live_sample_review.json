@@ -1,0 +1,171 @@
+{
+  "snapshot_at": "2026-11-02T15:09:29.989513+00:00",
+  "scope": "Ручная разметка заголовков и доступных описаний, проверка предварительного фильтра. Это не оценка живой модели или готовых карточек.",
+  "reviewer": "Codex, ручной разбор доступного снимка",
+  "include": 6,
+  "retained_by_prefilter": 6,
+  "requires_full_text": 3,
+  "duplicate_note": "Две публикации Meta на разных языках описывают одно событие и не подтверждают распространение механики.",
+  "materials": [
+    {
+      "source": "Банки.ру",
+      "title": "Названы суммы POS-кредитов, которые сейчас одобряют россиянам",
+      "url": "https://www.banki.ru/news/lenta/?id=11028641",
+      "decision": "review",
+      "reason": "Статистика кредитов; описание упоминает ужесточение требований, но конкретное изменение продукта не установлено.",
+      "prefilter": true
+    },
+    {
+      "source": "Банки.ру",
+      "title": "Доллар — от 80,77 ₽: где выгодно обменять валюту 2 ноября",
+      "url": "https://www.banki.ru/news/lenta/?id=11028637",
+      "decision": "exclude",
+      "reason": "Обменные курсы и сравнение котировок, без продуктового изменения.",
+      "prefilter": false
+    },
+    {
+      "source": "Банк России",
+      "title": "Михаил Сперанский – архитектор государственных реформ (02.11.2026)",
+      "url": "https://www.cbr.ru/press/PR/?file=639292076474400194COINS.htm",
+      "decision": "exclude",
+      "reason": "Выпуск памятной монеты без установленной связи с цифровым банковским продуктом.",
+      "prefilter": true
+    },
+    {
+      "source": "Банк России",
+      "title": "На сайте Банка России пройдут технические работы (30.10.2026)",
+      "url": "https://www.cbr.ru/press/PR/?file=639289575398220007SITE.htm",
+      "decision": "exclude",
+      "reason": "Кратковременные работы на сайте регулятора; существенное изменение доступа клиентов не установлено.",
+      "prefilter": true
+    },
+    {
+      "source": "Хабр: Финансы",
+      "title": "Считаю юнит-экономику в коде: где расходятся формулы калькуляторов",
+      "url": "https://habr.com/ru/articles/1102696/",
+      "decision": "exclude",
+      "reason": "Обучающая статья о расчётах, не сообщение о новом изменении.",
+      "prefilter": false
+    },
+    {
+      "source": "Хабр: Финансы",
+      "title": "Кто заплатит, если ИИ-агент ошибётся: страхование ИИ-рисков в России и на Западе",
+      "url": "https://habr.com/ru/articles/1102652/",
+      "decision": "review",
+      "reason": "Тема страхования AI-рисков перспективна; нужен полный текст для проверки конкретных новых продуктов.",
+      "prefilter": true
+    },
+    {
+      "source": "Finextra",
+      "title": "Binance users withdraw $5bn in wake of hack",
+      "url": "https://www.finextra.com/newsarticle/48683/binance-users-withdraw-5bn-in-wake-of-hack",
+      "decision": "include",
+      "reason": "Конкретный инцидент безопасности и реакция клиентов; применим к исследованию доверия.",
+      "prefilter": true
+    },
+    {
+      "source": "Finextra",
+      "title": "OPay withdraws planned $304m US IPO after regulatory inquiry",
+      "url": "https://www.finextra.com/newsarticle/48682/opay-withdraws-planned-304m-us-ipo-after-regulatory-inquiry",
+      "decision": "include",
+      "reason": "Отмена IPO после регуляторной проверки: конкретное стратегическое событие финтех-компании.",
+      "prefilter": true
+    },
+    {
+      "source": "TechCrunch",
+      "title": "Omen AI adds liquid know-how in $16 million Aquatic Labs acquisition",
+      "url": "https://techcrunch.com/2026/11/02/omen-ai-adds-liquid-know-how-in-16-million-aquatic-labs-acquisition/",
+      "decision": "exclude",
+      "reason": "Сделка в охлаждении дата-центров; в доступном описании нет конкретной связи с клиентским продуктом банка.",
+      "prefilter": true
+    },
+    {
+      "source": "TechCrunch",
+      "title": "Ninja’s first-ever microwave just replaced two of my kitchen appliances at once",
+      "url": "https://techcrunch.com/2026/11/02/ninjas-first-ever-microwave-just-replaced-two-of-my-kitchen-appliances-at-once/",
+      "decision": "exclude",
+      "reason": "Бытовая техника без установленной банковской применимости.",
+      "prefilter": false
+    },
+    {
+      "source": "Vulcan Post",
+      "title": "While S’pore gyms shut down, UFIT is making up to S$18M a year with just 4 outlets",
+      "url": "https://vulcanpost.com/913609/ufit-singapore-gym/",
+      "decision": "exclude",
+      "reason": "Выручка фитнес-клубов без существенного нового цифрового сценария.",
+      "prefilter": true
+    },
+    {
+      "source": "Vulcan Post",
+      "title": "“Very exciting, very scary”: Zermatt Neo on opening his first restaurant in Singapore",
+      "url": "https://vulcanpost.com/914165/zermatt-neo-new-restaurant-over/",
+      "decision": "exclude",
+      "reason": "Открытие ресторана без релевантного цифрового изменения.",
+      "prefilter": false
+    },
+    {
+      "source": "OpenAI",
+      "title": "Introducing the Grid Protectors Program",
+      "url": "https://openai.com/index/grid-protectors-program",
+      "decision": "review",
+      "reason": "Новая программа требует проверки полного текста; связь с продуктовой стратегией банка не установлена по заголовку.",
+      "prefilter": true
+    },
+    {
+      "source": "OpenAI",
+      "title": "Making it easier for websites to express AI training preferences",
+      "url": "https://openai.com/index/helping-websites-express-ai-training-preferences",
+      "decision": "include",
+      "reason": "Новый механизм управления предпочтениями использования данных: доступ и доверие.",
+      "prefilter": true
+    },
+    {
+      "source": "Google",
+      "title": "Google Fitbit Edge: On shelves now",
+      "url": "https://blog.google/products-and-platforms/devices/fitbit/google-fitbit-edge-on-shelves-now/",
+      "decision": "exclude",
+      "reason": "Аппаратный фитнес-трекер; из доступного описания не следует существенный переносимый банковский сценарий.",
+      "prefilter": true
+    },
+    {
+      "source": "Google",
+      "title": "We’ve received our first response from the Project Suncatcher prototype satellite.",
+      "url": "https://blog.google/innovation-and-ai/models-and-research/google-research/project-suncatcher-satellite-response/",
+      "decision": "exclude",
+      "reason": "Исследовательский спутник; клиентское изменение для банка не установлено.",
+      "prefilter": false
+    },
+    {
+      "source": "Meta",
+      "title": "L’avenir appartient à tous: Meta et INCA s’associent pour soutenir les personnes aveugles, sourdes et aveugles ou ayant une basse vision au Canada",
+      "url": "https://about.fb.com/news/2026/10/lavenir-appartient-a-tous-meta-et-inca-sassocient-pour-soutenir-les-personnes-aveugles-sourdes-et-aveugles-ou-ayant-une-basse-vision-au-canada/",
+      "decision": "include",
+      "reason": "Новое партнёрство по доступности. Перевод того же события Meta/CNIB, не независимый сигнал.",
+      "prefilter": true
+    },
+    {
+      "source": "Meta",
+      "title": "The Future Is for Everyone: Meta and CNIB Partner to Support Canadians Who Are Blind, Deafblind or Have Low Vision",
+      "url": "https://about.fb.com/news/2026/10/the-future-is-for-everyone-meta-and-cnib-partner-to-support-canadians-who-are-blind-deafblind-or-have-low-vision/",
+      "decision": "include",
+      "reason": "Партнёрство и поддержка пользователей с нарушениями зрения; тема исследования доступности.",
+      "prefilter": true
+    },
+    {
+      "source": "Microsoft",
+      "title": "Introducing the Microsoft Copilot harness: Unlocking the potential of truly multi-model agentic work",
+      "url": "https://blogs.microsoft.com/blog/2026/10/28/introducing-the-microsoft-copilot-harness-unlocking-the-potential-of-truly-multi-model-agentic-work/",
+      "decision": "include",
+      "reason": "Запуск инструмента оркестрации нескольких моделей; конкретная основа для проверки сценариев помощника.",
+      "prefilter": true
+    },
+    {
+      "source": "Microsoft",
+      "title": "The platform approach to becoming Frontier",
+      "url": "https://blogs.microsoft.com/blog/2026/10/27/the-platform-approach-to-becoming-frontier/",
+      "decision": "exclude",
+      "reason": "Общая концептуальная статья; новое изменение не установлено по доступному описанию.",
+      "prefilter": true
+    }
+  ]
+}
