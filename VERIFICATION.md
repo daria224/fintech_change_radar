@@ -4,7 +4,7 @@
 
 | Область | Результат |
 |---|---|
-| Python / Postgres | 27 тестов прошли на локальном Python 3.14 и в Docker с целевым Python 3.12 |
+| Python / Postgres | 33 теста прошли на локальном Python 3.14; первоначальные 27 также прошли в Docker с целевым Python 3.12 |
 | Миграции | Повторный запуск сохраняет старые findings и подписчиков; активны только 10 настроенных RSS |
 | Сбор | Все 10 источников доступны; адрес Хабра исправлен с `fintech` на `finance` |
 | История | Реальный диапазон зависит от ленты; материалы старше 60 дней и даты из далёкого будущего не загружаются |
@@ -21,6 +21,7 @@
 | Статика | `ruff check .` проходит |
 | Сборка | Docker-образ Python 3.12 собран; тесты выполнялись внутри него |
 | Без GitHub | Автономный Dockerfile собран из пустого контекста; внутри прошли 27 тестов. Самодостаточный Compose прошёл `docker compose config --quiet` |
+| Локальный режим | Отдельный Compose успешно запустил базу, worker и ленту; `/health` на localhost:18080 вернул 200. Telegram и платный анализ выключены. Проверено отсутствие `.env.local` в образе и игнорирование файла Git |
 
 Подробные результаты: [tests.txt](reports/tests.txt), [live_sources.json](reports/live_sources.json), [live_collection.json](reports/live_collection.json), [live_sample_review.json](reports/live_sample_review.json).
 

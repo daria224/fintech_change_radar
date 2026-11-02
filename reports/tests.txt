@@ -1,3 +1,9 @@
+test_initialization_preserves_password_and_keys (tests.test_local_app.LocalAppTests.test_initialization_preserves_password_and_keys) ... ok
+test_local_bot_resets_previous_server_menu (tests.test_local_app.LocalAppTests.test_local_bot_resets_previous_server_menu) ... ok
+test_local_settings_override_ambient_credentials (tests.test_local_app.LocalAppTests.test_local_settings_override_ambient_credentials) ... ok
+test_preview_erases_paid_and_telegram_credentials (tests.test_local_app.LocalAppTests.test_preview_erases_paid_and_telegram_credentials) ... ok
+test_start_requires_keys (tests.test_local_app.LocalAppTests.test_start_requires_keys) ... ok
+test_start_requires_server_takeover_state (tests.test_local_app.LocalAppTests.test_start_requires_server_takeover_state) ... ok
 test_bad_model_and_deferred_budget (tests.test_radar.DatabaseTests.test_bad_model_and_deferred_budget) ... ok
 test_blocked_and_rate_limited_delivery (tests.test_radar.DatabaseTests.test_blocked_and_rate_limited_delivery) ... ok
 test_bot_start_preserves_subscription_and_status (tests.test_radar.DatabaseTests.test_bot_start_preserves_subscription_and_status) ... ok
@@ -27,6 +33,6 @@ test_validation_and_grounding (tests.test_radar.PureTests.test_validation_and_gr
 test_wrong_bot_identity_is_rejected_before_changes (tests.test_radar.PureTests.test_wrong_bot_identity_is_rejected_before_changes) ... ok
 
 ----------------------------------------------------------------------
-Ran 27 tests in 1.166s
+Ran 33 tests in 2.407s
 
 OK

@@ -1,0 +1,48 @@
+name: fintech-radar-local
+services:
+  postgres:
+    image: postgres:17-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: radar_local
+      POSTGRES_PASSWORD: ${LOCAL_DB_PASSWORD:?Run local setup first}
+      POSTGRES_DB: fintech_radar
+    volumes:
+      - local_pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U radar_local -d fintech_radar"]
+      interval: 3s
+      timeout: 3s
+      retries: 30
+  worker:
+    build: .
+    restart: unless-stopped
+    environment:
+      BLOCK: worker
+      DATABASE_URL: postgresql://radar_local:${LOCAL_DB_PASSWORD}@postgres:5432/fintech_radar
+      OPENROUTER_API_KEY: ${OPENROUTER_API_KEY:-}
+      MODEL: ${MODEL:-openai/gpt-4.1-mini}
+    depends_on:
+      postgres:
+        condition: service_healthy
+  bot:
+    build: .
+    restart: unless-stopped
+    environment:
+      BLOCK: bot
+      PORT: 8080
+      DATABASE_URL: postgresql://radar_local:${LOCAL_DB_PASSWORD}@postgres:5432/fintech_radar
+      TELEGRAM_TOKEN: ${TELEGRAM_TOKEN:-}
+      MINI_APP_URL: ${MINI_APP_URL:-}
+    ports:
+      - "127.0.0.1:${LOCAL_FEED_PORT:-18080}:8080"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8080/health',timeout=5)"]
+      interval: 15s
+      timeout: 6s
+      retries: 10
+volumes:
+  local_pgdata:
