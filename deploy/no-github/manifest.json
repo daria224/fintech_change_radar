@@ -1,0 +1,25 @@
+{
+  "archive_sha256": "1371f7ec72556e8e1e97083ed35e1eb6aeb99d441b0c25f74381a2a94e1a54eb",
+  "files": {
+    "bot/__init__.py": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "bot/main.py": "e47ce7f8f4e94d1b61f20fb32995738b2214cd345315ec5bdc65dbb4ad0c55f8",
+    "collector/__init__.py": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "collector/main.py": "2eb85940997650e7f16e654865eab372111b9126c83bddd4fc9567c6eabe9cd5",
+    "config/radar.json": "00751e208b51ce81d465964c01f3f67b173446a534239a3c6aee995be876d0c9",
+    "db/__init__.py": "cf91341b889e3ff2c1289a3859d68308f9c491d37d2d3e1bd1c1805ff670b685",
+    "db/queries.sql": "850cc4c3ff95a148b37b485a23e38b0fdc086fc1988b102536ecb945c40a9e52",
+    "db/radar.sql": "b65274194fefea2d84890ba17b5af5606b7a4f086c108feb73a2c9cd2d368161",
+    "db/schema.sql": "26ee8e00026148cf52e23db62ed18d47d23d5cb7c600c127f03e3479afdaf277",
+    "main.py": "1ea459b2305c29299ba07ad1c47fb293822b110cfcb8cd05ea53486b0a18ab33",
+    "radar_core/__init__.py": "f7ddc9396a2857277540cdf04c8ad4c4492196f906aac9a784237a861c596162",
+    "radar_core/analysis.py": "02c5ee0fdd9964b2eab9363c227db39c490aefb5bfa975fdb5d81d1ce83f6436",
+    "radar_core/collect.py": "3c45fd273e1d20912a115c85d76975f765f8f194000b0b1f5024f305389ebb13",
+    "radar_core/config.py": "9ed84063a7d4490cbd6c0758049e272ea00f8cfd3c6cf27707894f4af15aa0d7",
+    "radar_core/digest.py": "931ba3e51c453c7854cf5f006606e6a48e4d6a9dc086a2c8e079bafcf900454a",
+    "requirements.txt": "1dec46cd7cd4cee944a8e196359e0627ebba5f6aca4a559b0d06eae8970549ff",
+    "web/__init__.py": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "web/main.py": "ea003abc3eeaf44aa1a9f3bbbf60d94b40f933d96384b8be52d08f1a1a1097a7",
+    "worker/__init__.py": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "worker/main.py": "657a3e8bbdaeca14801254c4aaabe93b9cd44dfccc90975071e88d06871625cb"
+  }
+}
