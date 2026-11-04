@@ -1,6 +1,9 @@
 .env
-.env.local
-.env.local.*
+.env.*
+!.env.example
+**/.env
+**/.env.*
+!**/.env.example
 __pycache__/
 *.pyc
 .DS_Store
@@ -8,3 +11,20 @@ __pycache__/
 backups/
 *.dump
 .ruff_cache/
+
+# Private keys and local credential files
+*.pem
+*.key
+*.p12
+*.pfx
+*.jks
+id_rsa
+id_ed25519
+id_ecdsa
+secrets/
+credentials/
+config.local.*
+*.local.json
+*.local.yaml
+*.local.yml
+*.secrets.*

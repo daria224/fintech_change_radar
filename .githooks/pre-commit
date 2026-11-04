@@ -1,0 +1,43 @@
+#!/bin/sh
+set -eu
+
+find_gitleaks() {
+    if command -v gitleaks >/dev/null 2>&1; then
+        command -v gitleaks
+        return 0
+    fi
+
+    if [ -n "${LOCALAPPDATA:-}" ] && command -v cygpath >/dev/null 2>&1; then
+        appdata="$(cygpath -u "$LOCALAPPDATA")/Microsoft/WinGet"
+        for candidate in "$appdata"/Links/gitleaks.exe "$appdata"/Packages/Gitleaks.Gitleaks_*/gitleaks.exe; do
+            if [ -x "$candidate" ]; then
+                printf '%s\n' "$candidate"
+                return 0
+            fi
+        done
+    fi
+
+    return 1
+}
+
+if ! scanner="$(find_gitleaks)"; then
+    printf '%s\n' 'Gitleaks is required. Run: winget install --id Gitleaks.Gitleaks --exact' >&2
+    exit 1
+fi
+
+git diff --cached --name-only | while IFS= read -r path; do
+    case "$path" in
+        .env|*/.env|.env.*|*/.env.*)
+            case "$path" in
+                .env.example|*/.env.example) ;;
+                *) printf 'Blocked sensitive environment file: %s\n' "$path" >&2; exit 1 ;;
+            esac
+            ;;
+        *.pem|*.key|*.p12|*.pfx|*.jks|id_rsa|*/id_rsa|id_ed25519|*/id_ed25519|id_ecdsa|*/id_ecdsa|secrets/*|*/secrets/*|credentials/*|*/credentials/*|config.local.*|*/config.local.*|*.local.json|*.local.yaml|*.local.yml|*.secrets.*)
+            printf 'Blocked sensitive local credential file: %s\n' "$path" >&2
+            exit 1
+            ;;
+    esac
+done
+
+exec "$scanner" git --staged --redact --no-banner

@@ -1,0 +1,47 @@
+#!/bin/sh
+set -eu
+
+find_gitleaks() {
+    if command -v gitleaks >/dev/null 2>&1; then
+        command -v gitleaks
+        return 0
+    fi
+
+    if [ -n "${LOCALAPPDATA:-}" ] && command -v cygpath >/dev/null 2>&1; then
+        appdata="$(cygpath -u "$LOCALAPPDATA")/Microsoft/WinGet"
+        for candidate in "$appdata"/Links/gitleaks.exe "$appdata"/Packages/Gitleaks.Gitleaks_*/gitleaks.exe; do
+            if [ -x "$candidate" ]; then
+                printf '%s\n' "$candidate"
+                return 0
+            fi
+        done
+    fi
+
+    return 1
+}
+
+if ! scanner="$(find_gitleaks)"; then
+    printf '%s\n' 'Gitleaks is required. Run: winget install --id Gitleaks.Gitleaks --exact' >&2
+    exit 1
+fi
+
+while read -r local_ref local_sha remote_ref remote_sha; do
+    [ -n "${local_sha:-}" ] || continue
+    case "$local_sha" in
+        *[!0-9a-fA-F]*) printf '%s\n' 'Invalid local object ID from Git.' >&2; exit 1 ;;
+    esac
+    case "$local_sha" in
+        *0000000000000000000000000000000000000000) continue ;;
+    esac
+
+    case "${remote_sha:-}" in
+        *[!0-9a-fA-F]*) printf '%s\n' 'Invalid remote object ID from Git.' >&2; exit 1 ;;
+    esac
+    case "${remote_sha:-}" in
+        *0000000000000000000000000000000000000000) range="$local_sha" ;;
+        *) range="$remote_sha..$local_sha" ;;
+    esac
+
+    printf 'Gitleaks: checking commits for %s\n' "$remote_ref" >&2
+    "$scanner" git --redact --no-banner --log-opts="$range" .
+done

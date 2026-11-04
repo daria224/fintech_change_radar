@@ -29,6 +29,8 @@
 
 Python 3.12+ и Postgres 17. Установите `requirements.txt` в виртуальное окружение. Задайте переменные из [.env.example](.env.example) средствами окружения; файл `.env` автоматически не загружается. Не храните секреты в Git.
 
+Защита от случайной отправки секретов: [установка Gitleaks и Git hooks для Windows/Codex](SECURITY.md). Docker не требуется.
+
 ```text
 python main.py worker
 python main.py bot
