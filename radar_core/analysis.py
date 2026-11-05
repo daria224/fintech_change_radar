@@ -83,36 +83,98 @@ def request_json(path, body=None, key=None):
 def prices():
     model = next((m for m in request_json("/models")["data"] if m["id"] == MODEL), None)
     if not model:
-        raise ValueError("модель отсутствует в каталоге цен")
-    p = model["pricing"]
-    # Additional per-request or image/web fees are not enabled by this pipeline.
-    for k, v in p.items():
-        if (
-            k
-            not in (
-                "prompt",
-                "completion",
-                "input_cache_read",
-                "input_cache_write",
-                "discount",
-                "web_search",
-                "image",
-                "audio",
-                "input_audio_cache",
-            )
-            and Decimal(str(v or 0)) != 0
-        ):
-            raise ValueError("неподдерживаемая дополнительная стоимость: " + k)
-    input_prices = [
-        Decimal(str(p[k]))
-        for k in ("prompt", "input_cache_read", "input_cache_write")
-        if p.get(k) is not None
-    ]
-    result = (max(input_prices), Decimal(str(p["completion"])))
-    if any(not x.is_finite() or x < 0 for x in result):
-        raise ValueError("неизвестная цена модели")
-    return result
+        raise ValueError("Модель отсутствует в каталоге цен")
+    pricing = model.get("pricing")
+    if not isinstance(pricing, dict):
+        raise ValueError("Отсутствует или некорректна структура тарифов модели")
 
+    # Cache token rates and conditional overrides are included in a conservative
+    # maximum so the reservation remains safe for every route and pricing tier.
+    input_keys = (
+        "prompt",
+        "input_cache_read",
+        "input_cache_write",
+        "input_cache_write_1h",
+    )
+    output_keys = ("completion",)
+    supported_rates = set(input_keys + output_keys)
+    pricing_metadata = {"discount", "overrides"}
+    override_conditions = {"min_prompt_tokens", "utc_days", "utc_start", "utc_end"}
+
+    def read_price(value, field):
+        if value is None:
+            return None
+        try:
+            parsed = Decimal(str(value))
+        except Exception as exc:
+            raise ValueError("Невозможно оценить тариф модели: " + field) from exc
+        if not parsed.is_finite() or parsed < 0:
+            raise ValueError("Некорректный тариф модели: " + field)
+        return parsed
+
+    def collect_rates(rate_object, allowed_conditions=()):
+        if not isinstance(rate_object, dict):
+            raise ValueError("Некорректная структура тарифов модели")
+        collected = {key: [] for key in supported_rates}
+        for key, value in rate_object.items():
+            if key in allowed_conditions:
+                if key == "min_prompt_tokens":
+                    threshold = read_price(value, key)
+                    if threshold is None:
+                        raise ValueError("Невозможно оценить условие тарифа модели: " + key)
+                elif key in ("utc_start", "utc_end"):
+                    if not isinstance(value, (int, float)) or isinstance(value, bool):
+                        raise ValueError("Некорректное условие тарифа модели: " + key)
+                elif key == "utc_days":
+                    if not isinstance(value, list) or any(not isinstance(day, str) for day in value):
+                        raise ValueError("Некорректное условие тарифа модели: " + key)
+                continue
+            if key in pricing_metadata:
+                if key == "discount" and value is not None:
+                    discount = read_price(value, key)
+                    if discount > 1:
+                        raise ValueError("Некорректная скидка модели")
+                elif key == "overrides" and allowed_conditions:
+                    raise ValueError("Некорректная вложенная структура тарифов модели")
+                continue
+            if key in supported_rates:
+                parsed = read_price(value, key)
+                if parsed is not None:
+                    collected[key].append(parsed)
+                continue
+            # A text-only request cannot use image/audio/search fees, and the
+            # budgeter does not model flat or separate reasoning charges. Reject
+            # every nonzero or malformed unsupported field instead of ignoring it.
+            if value is None:
+                continue
+            try:
+                unsupported = Decimal(str(value))
+            except Exception as exc:
+                raise ValueError("Неподдерживаемая структура стоимости: " + key) from exc
+            if not unsupported.is_finite() or unsupported != 0:
+                raise ValueError("Неподдерживаемая дополнительная стоимость: " + key)
+        return collected
+
+    rates = collect_rates(pricing)
+    if not rates["prompt"] or not rates["completion"]:
+        raise ValueError("Не указаны обязательные цены входа или выхода модели")
+
+    overrides = pricing.get("overrides", [])
+    if overrides is None:
+        overrides = []
+    if not isinstance(overrides, list):
+        raise ValueError("Некорректная структура условных тарифов модели")
+    for override in overrides:
+        override_rates = collect_rates(override, override_conditions)
+        for key in supported_rates:
+            rates[key].extend(override_rates[key])
+
+    # Taking the maximum across all base and override rates bounds any cache
+    # billing mode and every conditional price tier, regardless of its trigger.
+    return (
+        max(rate for key in input_keys for rate in rates[key]),
+        max(rates["completion"]),
+    )
 
 def reserve(conn, amount, pilot=False, material_id=None):
     day = datetime.now(MSK).date()
@@ -128,7 +190,7 @@ def reserve(conn, amount, pilot=False, material_id=None):
             pilot_used = conn.execute(
                 "SELECT coalesce(sum(coalesce(actual,reserved)),0) FROM radar_spend WHERE pilot=true"
             ).fetchone()[0]
-            if pilot_used + amount > PILOT_BUDGET_USD:
+            if not pilot_budget_allows(pilot_used, amount):
                 return None
         return conn.execute(
             """INSERT INTO radar_spend(budget_day,model,reserved,pilot,material_id)
@@ -237,6 +299,15 @@ def validate(answer, text, candidates):
     return answer
 
 
+def pilot_budget_allows(used, amount):
+    return used + amount <= PILOT_BUDGET_USD
+
+
+def estimate_cost_ceiling(content, input_price, output_price, max_output_tokens):
+    # A UTF-8 byte is a conservative token upper bound, plus chat framing overhead.
+    return input_price * (len(content.encode()) + 1024) + output_price * max_output_tokens
+
+
 def analyze(conn, title, text, published, mode, candidates, pilot=False, material_id=None):
     if (
         conn is not None
@@ -270,8 +341,7 @@ def analyze(conn, title, text, published, mode, candidates, pilot=False, materia
             ensure_ascii=False,
         )
     )
-    # A UTF-8 byte is a conservative token upper bound, plus chat framing overhead.
-    ceiling = p_in * (len(content.encode()) + 1024) + p_out * CONFIG["max_output_tokens"]
+    ceiling = estimate_cost_ceiling(content, p_in, p_out, CONFIG["max_output_tokens"])
     spend_id = reserve(conn, ceiling, pilot=pilot, material_id=material_id)
     if spend_id is None:
         return None

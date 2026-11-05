@@ -325,6 +325,89 @@ class PureTests(unittest.TestCase):
                 analyze(None, "title", "text", None, "описание", [])
             call.assert_not_called()
 
+    def test_openrouter_prices_support_cache_ttls_and_conditional_overrides(self):
+        from radar_core.analysis import prices
+
+        catalog = {
+            "data": [
+                {
+                    "id": "test/model",
+                    "pricing": {
+                        "prompt": "0.000001",
+                        "completion": "0.000002",
+                        "input_cache_read": "0.0000001",
+                        "input_cache_write": "0.000002",
+                        "input_cache_write_1h": "0.000004",
+                        "overrides": [
+                            {
+                                "min_prompt_tokens": 10000,
+                                "prompt": "0.000005",
+                                "completion": "0.000006",
+                                "input_cache_write_1h": "0.000007",
+                            },
+                            {
+                                "utc_start": 100,
+                                "utc_end": 200,
+                                "utc_days": ["monday"],
+                                "input_cache_read": "0.000008",
+                            },
+                        ],
+                    },
+                }
+            ]
+        }
+        with (
+            patch("radar_core.analysis.MODEL", "test/model"),
+            patch("radar_core.analysis.request_json", return_value=catalog) as request,
+        ):
+            self.assertEqual(
+                prices(), (Decimal("0.000008"), Decimal("0.000006"))
+            )
+        request.assert_called_once_with("/models")
+
+    def test_unknown_nonzero_openrouter_fee_blocks_paid_chat_call(self):
+        catalog = {
+            "data": [
+                {
+                    "id": "test/model",
+                    "pricing": {
+                        "prompt": "0.000001",
+                        "completion": "0.000002",
+                        "input_cache_write_1h": "0.000004",
+                        "internal_reasoning": "0.000003",
+                    },
+                }
+            ]
+        }
+        with (
+            patch.dict(
+                os.environ,
+                {"OPENROUTER_ENABLED": "true", "OPENROUTER_API_KEY": "test-only"},
+            ),
+            patch("radar_core.analysis.MODEL", "test/model"),
+            patch("radar_core.analysis.request_json", return_value=catalog) as request,
+        ):
+            with self.assertRaises(ValueError):
+                analyze(None, "title", "text", None, "описание", [])
+        request.assert_called_once_with("/models")
+
+    def test_cost_ceiling_includes_conservative_input_and_output_bounds(self):
+        from radar_core.analysis import estimate_cost_ceiling
+
+        self.assertEqual(
+            estimate_cost_ceiling(
+                "abc", Decimal("0.00001"), Decimal("0.00002"), 100
+            ),
+            Decimal("0.00001") * (3 + 1024) + Decimal("0.00002") * 100,
+        )
+
+    def test_pilot_budget_limit_is_cumulative_and_exactly_one_dollar(self):
+        from radar_core.analysis import PILOT_BUDGET_USD, pilot_budget_allows
+
+        self.assertEqual(PILOT_BUDGET_USD, Decimal("1.00"))
+        self.assertTrue(pilot_budget_allows(Decimal(".60"), Decimal(".40")))
+        self.assertFalse(pilot_budget_allows(Decimal(".60"), Decimal(".4001")))
+
     def test_wrong_bot_identity_is_rejected_before_changes(self):
         from bot.main import setup
 
