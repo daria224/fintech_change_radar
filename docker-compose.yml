@@ -23,7 +23,11 @@ services:
     restart: unless-stopped
     environment:
       BLOCK: worker
-      DATABASE_URL: postgresql://${RADAR_POSTGRES_USER:-radar_app}:${RADAR_POSTGRES_PASSWORD}@postgres:5432/fintech_radar
+      RADAR_DB_HOST: postgres
+      RADAR_DB_PORT: "5432"
+      RADAR_DB_NAME: fintech_radar
+      RADAR_DB_USER: ${RADAR_POSTGRES_USER:-radar_app}
+      RADAR_DB_PASSWORD: ${RADAR_POSTGRES_PASSWORD}
       OPENROUTER_ENABLED: ${RADAR_OPENROUTER_ENABLED:-false}
       OPENROUTER_API_KEY: ${RADAR_OPENROUTER_API_KEY:-}
       MODEL: ${RADAR_MODEL:-}
@@ -38,7 +42,11 @@ services:
       SERVICE_FQDN_BOT_8080: ${SERVICE_FQDN_BOT_8080:-}
       BLOCK: bot
       PORT: 8080
-      DATABASE_URL: postgresql://${RADAR_POSTGRES_USER:-radar_app}:${RADAR_POSTGRES_PASSWORD}@postgres:5432/fintech_radar
+      RADAR_DB_HOST: postgres
+      RADAR_DB_PORT: "5432"
+      RADAR_DB_NAME: fintech_radar
+      RADAR_DB_USER: ${RADAR_POSTGRES_USER:-radar_app}
+      RADAR_DB_PASSWORD: ${RADAR_POSTGRES_PASSWORD}
       TELEGRAM_ENABLED: ${RADAR_TELEGRAM_ENABLED:-false}
       TELEGRAM_TOKEN: ${RADAR_TELEGRAM_TOKEN:-}
       MINI_APP_URL: ${RADAR_MINI_APP_URL:-}

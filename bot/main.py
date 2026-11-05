@@ -309,9 +309,9 @@ class Handler(BaseHTTPRequestHandler):
 
 
 def main():
-    with db.connect() as conn:
-        db.init_schema(conn)
     if telegram_enabled():
+        with db.connect() as conn:
+            db.init_schema(conn)
         threading.Thread(target=loop, daemon=True).start()
     ThreadingHTTPServer(("0.0.0.0", int(os.environ.get("PORT", "8080"))), Handler).serve_forever()
 

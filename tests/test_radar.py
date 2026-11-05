@@ -46,6 +46,57 @@ def event(eid, company="Тест Банк", pattern=None, mechanism="плате�
 
 
 class PureTests(unittest.TestCase):
+    def test_database_connection_passes_special_password_as_parameter(self):
+        import db
+
+        password = "test-only@:/?#%[]!$ with space\\backslash"
+        environment = {
+            "RADAR_DB_HOST": "postgres",
+            "RADAR_DB_PORT": "5432",
+            "RADAR_DB_NAME": "fintech_radar",
+            "RADAR_DB_USER": "radar_app",
+            "RADAR_DB_PASSWORD": password,
+        }
+        with (
+            patch.dict(os.environ, environment, clear=True),
+            patch("db.psycopg.connect") as connect,
+        ):
+            db.connect()
+        connect.assert_called_once_with(
+            host="postgres",
+            port=5432,
+            dbname="fintech_radar",
+            user="radar_app",
+            password=password,
+            autocommit=True,
+        )
+
+    def test_bot_and_worker_share_database_connection_helper(self):
+        import bot.main as bot_main
+        import db
+        import worker.main as worker_main
+
+        self.assertIs(bot_main.db, db)
+        self.assertIs(worker_main.db, db)
+
+    def test_bot_without_telegram_does_not_open_database_at_startup(self):
+        from bot.main import main as bot_main
+
+        with (
+            patch.dict(
+                os.environ,
+                {"TELEGRAM_ENABLED": "false", "TELEGRAM_TOKEN": "test-only", "PORT": "8080"},
+                clear=True,
+            ),
+            patch("bot.main.db.connect") as connect,
+            patch("bot.main.threading.Thread") as thread,
+            patch("bot.main.ThreadingHTTPServer") as server,
+        ):
+            bot_main()
+        connect.assert_not_called()
+        thread.assert_not_called()
+        server.return_value.serve_forever.assert_called_once_with()
+
     def test_url_and_html(self):
         self.assertEqual(
             canonical_url("https://EXAMPLE.com/a?utm_source=x&b=2#top"),

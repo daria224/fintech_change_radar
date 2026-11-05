@@ -10,6 +10,15 @@ SCHEMA = Path(__file__).with_name("schema.sql")
 
 
 def connect():
+    if os.environ.get("RADAR_DB_HOST"):
+        return psycopg.connect(
+            host=os.environ["RADAR_DB_HOST"],
+            port=int(os.environ.get("RADAR_DB_PORT", "5432")),
+            dbname=os.environ["RADAR_DB_NAME"],
+            user=os.environ["RADAR_DB_USER"],
+            password=os.environ.get("RADAR_DB_PASSWORD", ""),
+            autocommit=True,
+        )
     return psycopg.connect(os.environ["DATABASE_URL"], autocommit=True)
 
 
