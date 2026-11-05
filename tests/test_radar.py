@@ -1,5 +1,6 @@
 import os
 import unittest
+from argparse import ArgumentTypeError
 from datetime import datetime, timedelta
 from decimal import Decimal
 from unittest.mock import patch
@@ -176,6 +177,40 @@ class PureTests(unittest.TestCase):
                 analyze(None, "title", "text", None, "описание", [])
             prices.assert_not_called()
 
+    def test_pilot_requires_three_to_five_distinct_positive_ids(self):
+        from radar_core.pilot import parse_ids
+
+        self.assertEqual(parse_ids("12, 13, 14"), [12, 13, 14])
+        for invalid in ("1,2", "1,2,3,4,5,6", "1,1,2", "0,2,3", "a,2,3"):
+            with self.subTest(invalid=invalid), self.assertRaises(ArgumentTypeError):
+                parse_ids(invalid)
+
+    def test_queue_processor_is_disabled_without_explicit_mode(self):
+        from radar_core.analysis import process
+
+        self.assertEqual(process(None), 0)
+
+    def test_worker_skips_queue_when_auto_process_is_false(self):
+        from unittest.mock import Mock
+
+        from worker.main import tick
+
+        conn = Mock()
+        results = [
+            Mock(fetchone=Mock(return_value=(True,))),
+            Mock(fetchone=Mock(return_value=None)),
+            Mock(fetchone=Mock(return_value=None)),
+        ]
+        conn.execute.side_effect = results + [Mock(), Mock(), Mock(), Mock()]
+        with (
+            patch.dict(os.environ, {"RADAR_AI_AUTO_PROCESS": "false"}),
+            patch("worker.main.collect") as collect,
+            patch("worker.main.process") as process_queue,
+        ):
+            tick(conn)
+        collect.assert_called_once()
+        process_queue.assert_not_called()
+
     def test_20_labeled_prefilter_cases(self):
         # Synthetic boundary cases, not a claim of live-model quality.
         cases = [
@@ -331,6 +366,27 @@ class DatabaseTests(unittest.TestCase):
         self.assertIsNotNone(reserve(self.conn, Decimal(".3")))
         self.assertIsNone(reserve(self.conn, Decimal(".001")))
 
+    def test_pilot_budget_is_cumulative_across_days_and_separate(self):
+        self.assertIsNotNone(reserve(self.conn, Decimal(".6"), pilot=True))
+        self.conn.execute("UPDATE radar_spend SET budget_day=budget_day-1")
+        self.assertIsNone(reserve(self.conn, Decimal(".5"), pilot=True))
+        self.assertIsNotNone(reserve(self.conn, Decimal(".4"), pilot=True))
+        self.assertIsNone(reserve(self.conn, Decimal(".001"), pilot=True))
+        self.assertEqual(
+            self.conn.execute("SELECT bool_and(pilot) FROM radar_spend").fetchone()[0], True
+        )
+
+    def test_worker_does_not_process_queue_without_explicit_auto_mode(self):
+        from worker.main import tick
+
+        with (
+            patch.dict(os.environ, {"RADAR_AI_AUTO_PROCESS": "false"}, clear=False),
+            patch("worker.main.collect"),
+            patch("worker.main.process") as process_queue,
+        ):
+            tick(self.conn)
+        process_queue.assert_not_called()
+
     def test_concurrent_budget_reservations(self):
         from concurrent.futures import ThreadPoolExecutor
 
@@ -357,7 +413,7 @@ class DatabaseTests(unittest.TestCase):
             ),
             patch("radar_core.analysis.article", return_value=(TEXT, "описание")),
         ):
-            process(self.conn)
+            process(self.conn, automatic=True)
         row = self.conn.execute(
             "SELECT status,attempts FROM materials WHERE id=%s", (mid,)
         ).fetchone()
@@ -498,14 +554,14 @@ class DatabaseTests(unittest.TestCase):
             patch("radar_core.analysis.article", return_value=(TEXT, "описание")),
             patch("radar_core.analysis.analyze", side_effect=[one, two]),
         ):
-            self.assertEqual(process(self.conn), 2)
+            self.assertEqual(process(self.conn, automatic=True), 2)
         self.assertEqual(self.conn.execute("SELECT count(*) FROM radar_events").fetchone()[0], 1)
         self.assertEqual(self.conn.execute("SELECT count(*) FROM radar_evidence").fetchone()[0], 2)
         page = render_page(self.conn)
         self.assertIn("Что это может значить для банка", page)
         self.assertIn("Исследовательский вопрос", page)
         self.assertNotIn("Старый AI", page)
-        self.assertEqual(process(self.conn), 0)
+        self.assertEqual(process(self.conn, automatic=True), 0)
 
     def test_bad_model_and_deferred_budget(self):
         from radar_core.analysis import process
@@ -515,7 +571,7 @@ class DatabaseTests(unittest.TestCase):
             patch("radar_core.analysis.article", return_value=(TEXT, "описание")),
             patch("radar_core.analysis.analyze", side_effect=ValueError("invalid JSON")),
         ):
-            process(self.conn)
+            process(self.conn, automatic=True)
         self.assertEqual(
             self.conn.execute("SELECT attempts FROM materials WHERE id=%s", (mid,)).fetchone()[0],
             1,
@@ -525,7 +581,7 @@ class DatabaseTests(unittest.TestCase):
             patch("radar_core.analysis.article", return_value=(TEXT, "описание")),
             patch("radar_core.analysis.analyze", return_value=None),
         ):
-            process(self.conn)
+            process(self.conn, automatic=True)
         self.assertEqual(
             self.conn.execute("SELECT status FROM materials WHERE id=%s", (mid,)).fetchone()[0],
             "deferred",
@@ -563,7 +619,7 @@ class DatabaseTests(unittest.TestCase):
             patch("radar_core.analysis.article", return_value=(TEXT, "описание")),
             patch("radar_core.analysis.analyze", return_value=card()),
         ):
-            process(self.conn)
+            process(self.conn, automatic=True)
         now = datetime.now(MSK).replace(hour=9, minute=0, second=0, microsecond=0) + timedelta(
             days=1
         )
@@ -578,7 +634,7 @@ class DatabaseTests(unittest.TestCase):
             patch("radar_core.analysis.article", return_value=(TEXT, "описание")),
             patch("radar_core.analysis.analyze", return_value=card()),
         ):
-            process(self.conn)
+            process(self.conn, automatic=True)
         now = datetime.now(MSK).replace(hour=9, minute=0, second=0, microsecond=0)
         self.conn.execute("UPDATE radar_events SET created_at=%s", (now - timedelta(minutes=30),))
         self.conn.execute("UPDATE materials SET published_at=%s", (now - timedelta(hours=1),))
