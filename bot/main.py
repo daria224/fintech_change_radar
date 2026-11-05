@@ -25,6 +25,13 @@ def setting(name):
     return os.environ.get(name, "").strip()
 
 
+def telegram_enabled():
+    """Polling requires both a Radar-scoped token and an explicit opt-in."""
+    return setting("TELEGRAM_ENABLED").casefold() == "true" and bool(
+        setting("TELEGRAM_TOKEN")
+    )
+
+
 def page_url():
     url = setting("MINI_APP_URL") or setting("RAILWAY_PUBLIC_DOMAIN") or setting("COOLIFY_URL")
     if not url:
@@ -304,7 +311,7 @@ class Handler(BaseHTTPRequestHandler):
 def main():
     with db.connect() as conn:
         db.init_schema(conn)
-    if setting("TELEGRAM_TOKEN"):
+    if telegram_enabled():
         threading.Thread(target=loop, daemon=True).start()
     ThreadingHTTPServer(("0.0.0.0", int(os.environ.get("PORT", "8080"))), Handler).serve_forever()
 

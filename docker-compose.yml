@@ -1,44 +1,51 @@
-# Whole system in one resource: database, worker and bot.
-# Coolify fills the SERVICE_* values itself; you only set TELEGRAM_TOKEN and OPENROUTER_API_KEY.
-# Collection runs inside worker every 6 hours; disable the former external collector cron.
+# Independent Coolify application for Fintech Change Radar.
+# All control-plane variables use the RADAR_ prefix so Master variables are never reused.
+name: fintech-change-radar-${RADAR_INSTANCE_ID:?Set a unique RADAR_INSTANCE_ID for this Radar application}
+
 services:
   postgres:
     image: postgres:17-alpine
+    restart: unless-stopped
     environment:
-      - POSTGRES_USER=${SERVICE_USER_POSTGRES}
-      - POSTGRES_PASSWORD=${SERVICE_PASSWORD_POSTGRES}
-      - POSTGRES_DB=desk_research
+      POSTGRES_USER: ${RADAR_POSTGRES_USER:-radar_app}
+      POSTGRES_PASSWORD: ${RADAR_POSTGRES_PASSWORD:?Set a Radar-only PostgreSQL password}
+      POSTGRES_DB: fintech_radar
     volumes:
-      - pgdata:/var/lib/postgresql/data
+      - radar_data:/var/lib/postgresql/data
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d desk_research"]
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d fintech_radar"]
       interval: 5s
       timeout: 5s
       retries: 20
 
   worker:
     build: .
+    restart: unless-stopped
     environment:
-      - BLOCK=worker
-      - DATABASE_URL=postgresql://${SERVICE_USER_POSTGRES}:${SERVICE_PASSWORD_POSTGRES}@postgres:5432/desk_research
-      - OPENROUTER_API_KEY=${OPENROUTER_API_KEY}
-      - MODEL=${MODEL:-openai/gpt-4.1-mini}
+      BLOCK: worker
+      DATABASE_URL: postgresql://${RADAR_POSTGRES_USER:-radar_app}:${RADAR_POSTGRES_PASSWORD}@postgres:5432/fintech_radar
+      OPENROUTER_ENABLED: ${RADAR_OPENROUTER_ENABLED:-false}
+      OPENROUTER_API_KEY: ${RADAR_OPENROUTER_API_KEY:-}
+      MODEL: ${RADAR_MODEL:-}
     depends_on:
       postgres:
         condition: service_healthy
 
   bot:
     build: .
+    restart: unless-stopped
     environment:
-      - SERVICE_FQDN_BOT_8080
-      - BLOCK=bot
-      - PORT=8080
-      - DATABASE_URL=postgresql://${SERVICE_USER_POSTGRES}:${SERVICE_PASSWORD_POSTGRES}@postgres:5432/desk_research
-      - TELEGRAM_TOKEN=${TELEGRAM_TOKEN}
-      - MINI_APP_URL=${SERVICE_FQDN_BOT}
+      SERVICE_FQDN_BOT_8080: ${SERVICE_FQDN_BOT_8080:-}
+      BLOCK: bot
+      PORT: 8080
+      DATABASE_URL: postgresql://${RADAR_POSTGRES_USER:-radar_app}:${RADAR_POSTGRES_PASSWORD}@postgres:5432/fintech_radar
+      TELEGRAM_ENABLED: ${RADAR_TELEGRAM_ENABLED:-false}
+      TELEGRAM_TOKEN: ${RADAR_TELEGRAM_TOKEN:-}
+      MINI_APP_URL: ${RADAR_MINI_APP_URL:-}
     depends_on:
       postgres:
         condition: service_healthy
 
 volumes:
-  pgdata:
+  radar_data:
+    name: fintech-change-radar-${RADAR_INSTANCE_ID}-postgres

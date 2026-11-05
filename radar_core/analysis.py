@@ -17,6 +17,11 @@ MODEL = os.environ.get("MODEL", "openai/gpt-4.1-mini")
 API = "https://openrouter.ai/api/v1"
 
 
+def openrouter_enabled():
+    """Require explicit deployment opt-in before any paid model operation."""
+    return os.environ.get("OPENROUTER_ENABLED", "").strip().casefold() == "true"
+
+
 class AnalysisPaused(ValueError):
     """No safe paid request can be made; preserve the item for later."""
 
@@ -230,8 +235,12 @@ def analyze(conn, title, text, published, mode, candidates):
         and conn.execute("SELECT 1 FROM radar_meta WHERE key='billing_pause'").fetchone()
     ):
         raise AnalysisPaused("Расчёт стоимости требует проверки; платные вызовы остановлены")
+    if not openrouter_enabled():
+        raise AnalysisPaused("OpenRouter отключён; включите его явно после настройки модели и бюджета")
     if not os.environ.get("OPENROUTER_API_KEY"):
         raise AnalysisPaused("Ключ OpenRouter не настроен")
+    if not MODEL.strip():
+        raise AnalysisPaused("Модель OpenRouter не настроена")
     try:
         p_in, p_out = prices()
     except Exception as exc:

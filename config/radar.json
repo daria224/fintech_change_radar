@@ -1,7 +1,7 @@
 {
   "rules_version": "fintech-v2.0",
   "bot_username": "fintech_change_radar_desk_bot",
-  "history_days": 60,
+  "history_days": 90,
   "collect_hours": 6,
   "digest_hour_moscow": 9,
   "daily_budget_usd": "1.00",

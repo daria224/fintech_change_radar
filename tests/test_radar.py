@@ -5,7 +5,7 @@ from decimal import Decimal
 from unittest.mock import patch
 
 from radar_core.analysis import analyze, candidate, reserve, validate
-from radar_core.collect import article, canonical_url, entries, plain
+from radar_core.collect import article, canonical_url, collectable, entries, plain
 from radar_core.config import CONFIG, MSK
 from radar_core.digest import build, deliver, select_events, signal
 
@@ -68,6 +68,62 @@ class PureTests(unittest.TestCase):
             text, mode = article("https://example.com", "описание")
         self.assertEqual(text, "описание")
         self.assertIn("недоступен", mode)
+
+    def test_collection_keeps_source_history_without_age_cutoff(self):
+        now = datetime(2026, 11, 5)
+        self.assertTrue(collectable(now - timedelta(days=365), now))
+        self.assertFalse(collectable(now + timedelta(days=1), now))
+        self.assertTrue(collectable(None, now))
+
+    def test_telegram_polling_requires_explicit_enable_and_token(self):
+        from bot.main import telegram_enabled
+
+        with patch.dict(
+            os.environ,
+            {"TELEGRAM_ENABLED": "false", "TELEGRAM_TOKEN": "test-only"},
+        ):
+            self.assertFalse(telegram_enabled())
+        with patch.dict(
+            os.environ,
+            {"TELEGRAM_ENABLED": "true", "TELEGRAM_TOKEN": ""},
+        ):
+            self.assertFalse(telegram_enabled())
+        with patch.dict(
+            os.environ,
+            {"TELEGRAM_ENABLED": "true", "TELEGRAM_TOKEN": "test-only"},
+        ):
+            self.assertTrue(telegram_enabled())
+
+    def test_openrouter_requires_explicit_opt_in(self):
+        from radar_core.analysis import AnalysisPaused
+
+        with (
+            patch.dict(
+                os.environ,
+                {"OPENROUTER_ENABLED": "false", "OPENROUTER_API_KEY": "test-only"},
+            ),
+            patch("radar_core.analysis.prices") as prices,
+            patch("radar_core.analysis.request_json") as request,
+        ):
+            with self.assertRaises(AnalysisPaused):
+                analyze(None, "title", "text", None, "описание", [])
+            prices.assert_not_called()
+            request.assert_not_called()
+
+    def test_openrouter_requires_a_configured_model(self):
+        from radar_core.analysis import AnalysisPaused
+
+        with (
+            patch.dict(
+                os.environ,
+                {"OPENROUTER_ENABLED": "true", "OPENROUTER_API_KEY": "test-only"},
+            ),
+            patch("radar_core.analysis.MODEL", ""),
+            patch("radar_core.analysis.prices") as prices,
+        ):
+            with self.assertRaises(AnalysisPaused):
+                analyze(None, "title", "text", None, "описание", [])
+            prices.assert_not_called()
 
     def test_20_labeled_prefilter_cases(self):
         # Synthetic boundary cases, not a claim of live-model quality.
@@ -139,7 +195,10 @@ class PureTests(unittest.TestCase):
 
     def test_unknown_price_never_calls_paid_endpoint(self):
         with (
-            patch.dict(os.environ, {"OPENROUTER_API_KEY": "test-only"}),
+            patch.dict(
+                os.environ,
+                {"OPENROUTER_ENABLED": "true", "OPENROUTER_API_KEY": "test-only"},
+            ),
             patch("radar_core.analysis.prices", side_effect=ValueError("unknown")),
             patch("radar_core.analysis.request_json") as call,
         ):
@@ -241,7 +300,10 @@ class DatabaseTests(unittest.TestCase):
 
         mid = self.material()
         with (
-            patch.dict(os.environ, {"OPENROUTER_API_KEY": ""}),
+            patch.dict(
+                os.environ,
+                {"OPENROUTER_ENABLED": "true", "OPENROUTER_API_KEY": ""},
+            ),
             patch("radar_core.analysis.article", return_value=(TEXT, "описание")),
         ):
             process(self.conn)
@@ -253,7 +315,10 @@ class DatabaseTests(unittest.TestCase):
 
     def test_malformed_response_is_charged_and_rejected(self):
         with (
-            patch.dict(os.environ, {"OPENROUTER_API_KEY": "test-only"}),
+            patch.dict(
+                os.environ,
+                {"OPENROUTER_ENABLED": "true", "OPENROUTER_API_KEY": "test-only"},
+            ),
             patch(
                 "radar_core.analysis.prices",
                 return_value=(Decimal(".0000004"), Decimal(".0000016")),
@@ -276,7 +341,10 @@ class DatabaseTests(unittest.TestCase):
     def test_missing_cost_retains_upper_bound(self):
         response = {"choices": [{"message": {"content": '{"relevant":false}'}}]}
         with (
-            patch.dict(os.environ, {"OPENROUTER_API_KEY": "test-only"}),
+            patch.dict(
+                os.environ,
+                {"OPENROUTER_ENABLED": "true", "OPENROUTER_API_KEY": "test-only"},
+            ),
             patch(
                 "radar_core.analysis.prices",
                 return_value=(Decimal(".0000004"), Decimal(".0000016")),
@@ -322,7 +390,10 @@ class DatabaseTests(unittest.TestCase):
 
     def test_paid_error_keeps_reservation(self):
         with (
-            patch.dict(os.environ, {"OPENROUTER_API_KEY": "test-only"}),
+            patch.dict(
+                os.environ,
+                {"OPENROUTER_ENABLED": "true", "OPENROUTER_API_KEY": "test-only"},
+            ),
             patch(
                 "radar_core.analysis.prices",
                 return_value=(Decimal(".000001"), Decimal(".000002")),

@@ -122,6 +122,11 @@ def article(url, fallback):
     return fallback, "описание; полный текст недоступен"
 
 
+def collectable(published_at, now):
+    """Keep all dated items available in the feed; reject only far-future dates."""
+    return not published_at or published_at <= now + timedelta(hours=6)
+
+
 def collect(conn, historical=False):
     if not conn.execute("SELECT pg_try_advisory_lock(4210)").fetchone()[0]:
         return 0
@@ -129,7 +134,6 @@ def collect(conn, historical=False):
     total = 0
     errors = []
     now = datetime.now(UTC)
-    cutoff = now - timedelta(days=CONFIG["history_days"])
     try:
         historical = (
             historical
@@ -156,7 +160,7 @@ def collect(conn, historical=False):
                 )
                 for x in items:
                     date = x["published_at"]
-                    if date and (date < cutoff or date > now + timedelta(hours=6)):
+                    if not collectable(date, now):
                         continue
                     backfill = historical or not date or date < now - timedelta(hours=24)
                     row = conn.execute(
