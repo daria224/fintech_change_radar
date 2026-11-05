@@ -31,6 +31,7 @@ services:
       OPENROUTER_ENABLED: ${RADAR_OPENROUTER_ENABLED:-false}
       OPENROUTER_API_KEY: ${RADAR_OPENROUTER_API_KEY:-}
       MODEL: ${RADAR_MODEL:-}
+      RADAR_AI_AUTO_PROCESS: ${RADAR_AI_AUTO_PROCESS:-false}
     depends_on:
       postgres:
         condition: service_healthy

@@ -15,6 +15,7 @@ from radar_core.config import CONFIG, MSK
 
 MODEL = os.environ.get("MODEL", "openai/gpt-4.1-mini")
 API = "https://openrouter.ai/api/v1"
+PILOT_BUDGET_USD = Decimal("1.00")
 
 
 def openrouter_enabled():
@@ -113,7 +114,7 @@ def prices():
     return result
 
 
-def reserve(conn, amount):
+def reserve(conn, amount, pilot=False):
     day = datetime.now(MSK).date()
     with conn.transaction():
         conn.execute("SELECT pg_advisory_xact_lock(4211)")
@@ -123,9 +124,15 @@ def reserve(conn, amount):
         ).fetchone()[0]
         if used + amount > Decimal(CONFIG["daily_budget_usd"]):
             return None
+        if pilot:
+            pilot_used = conn.execute(
+                "SELECT coalesce(sum(coalesce(actual,reserved)),0) FROM radar_spend WHERE pilot=true"
+            ).fetchone()[0]
+            if pilot_used + amount > PILOT_BUDGET_USD:
+                return None
         return conn.execute(
-            "INSERT INTO radar_spend(budget_day,model,reserved) VALUES (%s,%s,%s) RETURNING id",
-            (day, MODEL, amount),
+            "INSERT INTO radar_spend(budget_day,model,reserved,pilot) VALUES (%s,%s,%s,%s) RETURNING id",
+            (day, MODEL, amount, pilot),
         ).fetchone()[0]
 
 
@@ -229,7 +236,7 @@ def validate(answer, text, candidates):
     return answer
 
 
-def analyze(conn, title, text, published, mode, candidates):
+def analyze(conn, title, text, published, mode, candidates, pilot=False):
     if (
         conn is not None
         and conn.execute("SELECT 1 FROM radar_meta WHERE key='billing_pause'").fetchone()
@@ -264,7 +271,7 @@ def analyze(conn, title, text, published, mode, candidates):
     )
     # A UTF-8 byte is a conservative token upper bound, plus chat framing overhead.
     ceiling = p_in * (len(content.encode()) + 1024) + p_out * CONFIG["max_output_tokens"]
-    spend_id = reserve(conn, ceiling)
+    spend_id = reserve(conn, ceiling, pilot=pilot)
     if spend_id is None:
         return None
     body = {
@@ -321,19 +328,32 @@ def analyze(conn, title, text, published, mode, candidates):
         raise
 
 
-def process(conn, limit=25):
+def process(conn, limit=25, material_ids=None, pilot=False, automatic=False):
     import db
+
+    if pilot:
+        if material_ids is None or not 3 <= len(set(material_ids)) <= 5:
+            raise ValueError("Пилот принимает от 3 до 5 разных ID публикаций")
+        if limit > 5:
+            raise ValueError("Для пилота нельзя обработать больше 5 публикаций")
+    elif not automatic:
+        return 0
 
     if not conn.execute("SELECT pg_try_advisory_lock(4212)").fetchone()[0]:
         return 0
     found = 0
     run_id = None
     try:
-        rows = conn.execute("""SELECT id,title,text,url,published_at,historical FROM materials
+        query = """SELECT id,title,text,url,published_at,historical FROM materials
             WHERE radar_version IS NOT NULL AND status IN ('new','deferred','failed') AND attempts<3
             AND (retry_at IS NULL OR retry_at<=now())
-            ORDER BY historical, published_at DESC NULLS LAST,id LIMIT 300""").fetchall()
+            AND (%s::integer[] IS NULL OR id=ANY(%s))
+            ORDER BY historical, published_at DESC NULLS LAST,id LIMIT 300"""
+        ids = list(material_ids) if material_ids is not None else None
+        rows = conn.execute(query, (ids, ids)).fetchall()
         rows = sorted(rows, key=lambda x: (x[5], -priority(x[1], x[2])))[:limit]
+        if pilot and len(rows) != len(set(material_ids)):
+            raise ValueError("Каждый пилотный ID должен быть в очереди и доступен для обработки")
         if rows:
             run_id = db.start_run(conn, "worker")
         for mid, title, text, url, pub, historical in rows:
@@ -358,7 +378,7 @@ def process(conn, limit=25):
                         "SELECT id,company,event_date,card FROM radar_events WHERE created_at>now()-interval '60 days' ORDER BY id DESC LIMIT 35"
                     ).fetchall()
                 ]
-                answer = analyze(conn, title, text, pub, mode, candidates)
+                answer = analyze(conn, title, text, pub, mode, candidates, pilot=pilot)
                 if answer is None:
                     conn.execute(
                         "INSERT INTO radar_meta VALUES ('analysis_state','Суточный бюджет исчерпан; очередь отложена до завтра') ON CONFLICT(key) DO UPDATE SET value=excluded.value"

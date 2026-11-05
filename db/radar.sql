@@ -24,8 +24,10 @@ CREATE TABLE IF NOT EXISTS radar_evidence (
 CREATE TABLE IF NOT EXISTS radar_spend (
  id bigserial PRIMARY KEY, budget_day date NOT NULL, model text NOT NULL,
  reserved numeric NOT NULL CHECK(reserved >= 0), actual numeric,
- state text NOT NULL DEFAULT 'reserved', created_at timestamptz NOT NULL DEFAULT now()
+ state text NOT NULL DEFAULT 'reserved', created_at timestamptz NOT NULL DEFAULT now(),
+ pilot boolean NOT NULL DEFAULT false
 );
+ALTER TABLE radar_spend ADD COLUMN IF NOT EXISTS pilot boolean NOT NULL DEFAULT false;
 CREATE INDEX IF NOT EXISTS radar_spend_day ON radar_spend(budget_day);
 CREATE TABLE IF NOT EXISTS radar_digests (
  day date PRIMARY KEY, text text NOT NULL, event_ids bigint[] NOT NULL,

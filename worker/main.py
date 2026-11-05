@@ -1,3 +1,4 @@
+import os
 import sys
 import time
 from datetime import UTC, datetime
@@ -36,7 +37,10 @@ def tick(conn):
             )
     finally:
         conn.execute("SELECT pg_advisory_unlock(4213)")
-    process(conn)
+    # Enabling a model alone must never drain the historical queue. Bulk analysis
+    # is a separate, explicit deployment setting; the manual pilot is ID-scoped.
+    if os.environ.get("RADAR_AI_AUTO_PROCESS", "false").strip().casefold() == "true":
+        process(conn, automatic=True)
 
 
 def main():
