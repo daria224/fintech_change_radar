@@ -6,6 +6,8 @@ ALTER TABLE materials ADD COLUMN IF NOT EXISTS historical boolean NOT NULL DEFAU
 ALTER TABLE materials ADD COLUMN IF NOT EXISTS content_mode text NOT NULL DEFAULT 'описание';
 ALTER TABLE materials ADD COLUMN IF NOT EXISTS attempts integer NOT NULL DEFAULT 0;
 ALTER TABLE materials ADD COLUMN IF NOT EXISTS retry_at timestamptz;
+ALTER TABLE materials ADD COLUMN IF NOT EXISTS last_analysis_stage text;
+ALTER TABLE materials ADD COLUMN IF NOT EXISTS last_analysis_reason text;
 CREATE TABLE IF NOT EXISTS radar_source_checks (
  id bigserial PRIMARY KEY, source_id integer REFERENCES sources(id), run_id integer REFERENCES runs(id),
  checked_at timestamptz NOT NULL DEFAULT now(), ok boolean NOT NULL,
@@ -25,9 +27,12 @@ CREATE TABLE IF NOT EXISTS radar_spend (
  id bigserial PRIMARY KEY, budget_day date NOT NULL, model text NOT NULL,
  reserved numeric NOT NULL CHECK(reserved >= 0), actual numeric,
  state text NOT NULL DEFAULT 'reserved', created_at timestamptz NOT NULL DEFAULT now(),
- pilot boolean NOT NULL DEFAULT false
+ pilot boolean NOT NULL DEFAULT false,
+ material_id integer REFERENCES materials(id), request_started_at timestamptz
 );
 ALTER TABLE radar_spend ADD COLUMN IF NOT EXISTS pilot boolean NOT NULL DEFAULT false;
+ALTER TABLE radar_spend ADD COLUMN IF NOT EXISTS material_id integer REFERENCES materials(id);
+ALTER TABLE radar_spend ADD COLUMN IF NOT EXISTS request_started_at timestamptz;
 CREATE INDEX IF NOT EXISTS radar_spend_day ON radar_spend(budget_day);
 CREATE TABLE IF NOT EXISTS radar_digests (
  day date PRIMARY KEY, text text NOT NULL, event_ids bigint[] NOT NULL,

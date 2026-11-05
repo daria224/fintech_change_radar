@@ -29,6 +29,33 @@ def parse_ids(value):
     return ids
 
 
+def report_results(conn, ids):
+    spend_rows = conn.execute(
+        """SELECT material_id,
+                  count(*) FILTER (WHERE request_started_at IS NOT NULL),
+                  coalesce(sum(actual),0),
+                  coalesce(sum(reserved) FILTER (WHERE actual IS NULL),0),
+                  coalesce(string_agg(DISTINCT state, ',' ORDER BY state),'none')
+           FROM radar_spend WHERE pilot=true AND material_id=ANY(%s)
+           GROUP BY material_id""",
+        (ids,),
+    ).fetchall()
+    spend = {row[0]: row[1:] for row in spend_rows}
+    rows = conn.execute(
+        """SELECT id,status,attempts,last_analysis_stage,last_analysis_reason
+           FROM materials WHERE id=ANY(%s) ORDER BY id""",
+        (ids,),
+    ).fetchall()
+    for material_id, status, attempts, stage, reason in rows:
+        calls, actual, held, states = spend.get(material_id, (0, 0, 0, "none"))
+        print(
+            f"ID {material_id}: status={status}; stage={stage or 'unknown'}; "
+            f"attempts={attempts}; OpenRouter calls started={calls}; "
+            f"actual_cost=${actual}; unresolved_reserve=${held}; spend_states={states}; "
+            f"reason={reason or 'нет'}"
+        )
+
+
 def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
     group = parser.add_mutually_exclusive_group(required=True)
@@ -57,6 +84,7 @@ def main(argv=None):
             raise SystemExit(f"Пилот остановлен: ID не готовы к обработке: {missing}")
         print(f"Пилот: {len(args.ids)} выбранных публикаций; общий лимит расходов $1.00.")
         found = process(conn, limit=len(args.ids), material_ids=args.ids, pilot=True)
+        report_results(conn, args.ids)
         print(f"Пилот завершён; создано или обновлено событий: {found}.")
 
 

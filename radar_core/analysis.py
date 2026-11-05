@@ -83,38 +83,100 @@ def request_json(path, body=None, key=None):
 def prices():
     model = next((m for m in request_json("/models")["data"] if m["id"] == MODEL), None)
     if not model:
-        raise ValueError("модель отсутствует в каталоге цен")
-    p = model["pricing"]
-    # Additional per-request or image/web fees are not enabled by this pipeline.
-    for k, v in p.items():
-        if (
-            k
-            not in (
-                "prompt",
-                "completion",
-                "input_cache_read",
-                "input_cache_write",
-                "discount",
-                "web_search",
-                "image",
-                "audio",
-                "input_audio_cache",
-            )
-            and Decimal(str(v or 0)) != 0
-        ):
-            raise ValueError("неподдерживаемая дополнительная стоимость: " + k)
-    input_prices = [
-        Decimal(str(p[k]))
-        for k in ("prompt", "input_cache_read", "input_cache_write")
-        if p.get(k) is not None
-    ]
-    result = (max(input_prices), Decimal(str(p["completion"])))
-    if any(not x.is_finite() or x < 0 for x in result):
-        raise ValueError("неизвестная цена модели")
-    return result
+        raise ValueError("Модель отсутствует в каталоге цен")
+    pricing = model.get("pricing")
+    if not isinstance(pricing, dict):
+        raise ValueError("Отсутствует или некорректна структура тарифов модели")
 
+    # Cache token rates and conditional overrides are included in a conservative
+    # maximum so the reservation remains safe for every route and pricing tier.
+    input_keys = (
+        "prompt",
+        "input_cache_read",
+        "input_cache_write",
+        "input_cache_write_1h",
+    )
+    output_keys = ("completion",)
+    supported_rates = set(input_keys + output_keys)
+    pricing_metadata = {"discount", "overrides"}
+    override_conditions = {"min_prompt_tokens", "utc_days", "utc_start", "utc_end"}
 
-def reserve(conn, amount, pilot=False):
+    def read_price(value, field):
+        if value is None:
+            return None
+        try:
+            parsed = Decimal(str(value))
+        except Exception as exc:
+            raise ValueError("Невозможно оценить тариф модели: " + field) from exc
+        if not parsed.is_finite() or parsed < 0:
+            raise ValueError("Некорректный тариф модели: " + field)
+        return parsed
+
+    def collect_rates(rate_object, allowed_conditions=()):
+        if not isinstance(rate_object, dict):
+            raise ValueError("Некорректная структура тарифов модели")
+        collected = {key: [] for key in supported_rates}
+        for key, value in rate_object.items():
+            if key in allowed_conditions:
+                if key == "min_prompt_tokens":
+                    threshold = read_price(value, key)
+                    if threshold is None:
+                        raise ValueError("Невозможно оценить условие тарифа модели: " + key)
+                elif key in ("utc_start", "utc_end"):
+                    if not isinstance(value, (int, float)) or isinstance(value, bool):
+                        raise ValueError("Некорректное условие тарифа модели: " + key)
+                elif key == "utc_days":
+                    if not isinstance(value, list) or any(not isinstance(day, str) for day in value):
+                        raise ValueError("Некорректное условие тарифа модели: " + key)
+                continue
+            if key in pricing_metadata:
+                if key == "discount" and value is not None:
+                    discount = read_price(value, key)
+                    if discount > 1:
+                        raise ValueError("Некорректная скидка модели")
+                elif key == "overrides" and allowed_conditions:
+                    raise ValueError("Некорректная вложенная структура тарифов модели")
+                continue
+            if key in supported_rates:
+                parsed = read_price(value, key)
+                if parsed is not None:
+                    collected[key].append(parsed)
+                continue
+            # A text-only request cannot use image/audio/search fees, and the
+            # budgeter does not model flat or separate reasoning charges. Reject
+            # every nonzero or malformed unsupported field instead of ignoring it.
+            if value is None:
+                continue
+            try:
+                unsupported = Decimal(str(value))
+            except Exception as exc:
+                raise ValueError("Неподдерживаемая структура стоимости: " + key) from exc
+            if not unsupported.is_finite() or unsupported != 0:
+                raise ValueError("Неподдерживаемая дополнительная стоимость: " + key)
+        return collected
+
+    rates = collect_rates(pricing)
+    if not rates["prompt"] or not rates["completion"]:
+        raise ValueError("Не указаны обязательные цены входа или выхода модели")
+
+    overrides = pricing.get("overrides", [])
+    if overrides is None:
+        overrides = []
+    if not isinstance(overrides, list):
+        raise ValueError("Некорректная структура условных тарифов модели")
+    for override in overrides:
+        override_rates = collect_rates(override, override_conditions)
+        for key in supported_rates:
+            rates[key].extend(override_rates[key])
+
+    # Taking the maximum across all base and override rates bounds any cache
+    # billing mode and every conditional price tier, regardless of its trigger.
+    return (
+        max(rate for key in input_keys for rate in rates[key]),
+        max(rates["completion"]),
+    )
+
+def reserve(conn, amount, pilot=False, material_id=None):
     day = datetime.now(MSK).date()
     with conn.transaction():
         conn.execute("SELECT pg_advisory_xact_lock(4211)")
@@ -128,11 +190,12 @@ def reserve(conn, amount, pilot=False):
             pilot_used = conn.execute(
                 "SELECT coalesce(sum(coalesce(actual,reserved)),0) FROM radar_spend WHERE pilot=true"
             ).fetchone()[0]
-            if pilot_used + amount > PILOT_BUDGET_USD:
+            if not pilot_budget_allows(pilot_used, amount):
                 return None
         return conn.execute(
-            "INSERT INTO radar_spend(budget_day,model,reserved,pilot) VALUES (%s,%s,%s,%s) RETURNING id",
-            (day, MODEL, amount, pilot),
+            """INSERT INTO radar_spend(budget_day,model,reserved,pilot,material_id)
+               VALUES (%s,%s,%s,%s,%s) RETURNING id""",
+            (day, MODEL, amount, pilot, material_id),
         ).fetchone()[0]
 
 
@@ -236,7 +299,16 @@ def validate(answer, text, candidates):
     return answer
 
 
-def analyze(conn, title, text, published, mode, candidates, pilot=False):
+def pilot_budget_allows(used, amount):
+    return used + amount <= PILOT_BUDGET_USD
+
+
+def estimate_cost_ceiling(content, input_price, output_price, max_output_tokens):
+    # A UTF-8 byte is a conservative token upper bound, plus chat framing overhead.
+    return input_price * (len(content.encode()) + 1024) + output_price * max_output_tokens
+
+
+def analyze(conn, title, text, published, mode, candidates, pilot=False, material_id=None):
     if (
         conn is not None
         and conn.execute("SELECT 1 FROM radar_meta WHERE key='billing_pause'").fetchone()
@@ -251,7 +323,7 @@ def analyze(conn, title, text, published, mode, candidates, pilot=False):
     try:
         p_in, p_out = prices()
     except Exception as exc:
-        raise AnalysisPaused("Цена модели недоступна: " + str(exc)[:160]) from exc
+        raise AnalysisPaused("Цена модели недоступна; платный запрос не отправлен") from exc
     content = (
         PROMPT
         + "\n"
@@ -269,9 +341,8 @@ def analyze(conn, title, text, published, mode, candidates, pilot=False):
             ensure_ascii=False,
         )
     )
-    # A UTF-8 byte is a conservative token upper bound, plus chat framing overhead.
-    ceiling = p_in * (len(content.encode()) + 1024) + p_out * CONFIG["max_output_tokens"]
-    spend_id = reserve(conn, ceiling, pilot=pilot)
+    ceiling = estimate_cost_ceiling(content, p_in, p_out, CONFIG["max_output_tokens"])
+    spend_id = reserve(conn, ceiling, pilot=pilot, material_id=material_id)
     if spend_id is None:
         return None
     body = {
@@ -290,7 +361,18 @@ def analyze(conn, title, text, published, mode, candidates, pilot=False):
         },
     }
     try:
+        conn.execute("UPDATE radar_spend SET request_started_at=now() WHERE id=%s", (spend_id,))
+        if material_id is not None:
+            conn.execute(
+                "UPDATE materials SET last_analysis_stage='request_started',last_analysis_reason='Запрос к OpenRouter начат' WHERE id=%s",
+                (material_id,),
+            )
         response = request_json("/chat/completions", body, os.environ["OPENROUTER_API_KEY"])
+        if material_id is not None:
+            conn.execute(
+                "UPDATE materials SET last_analysis_stage='response_received',last_analysis_reason='Ответ модели получен' WHERE id=%s",
+                (material_id,),
+            )
         cost = response.get("usage", {}).get("cost")
         if cost is not None:
             cost = Decimal(str(cost))
@@ -357,13 +439,20 @@ def process(conn, limit=25, material_ids=None, pilot=False, automatic=False):
         if rows:
             run_id = db.start_run(conn, "worker")
         for mid, title, text, url, pub, historical in rows:
+            conn.execute(
+                "UPDATE materials SET last_analysis_stage='selected',last_analysis_reason=NULL WHERE id=%s",
+                (mid,),
+            )
             if not candidate(title, text):
-                conn.execute("UPDATE materials SET status='skipped' WHERE id=%s", (mid,))
+                conn.execute(
+                    "UPDATE materials SET status='skipped',last_analysis_stage='filtered',last_analysis_reason='Не прошёл предварительный фильтр; запрос к OpenRouter не отправлялся' WHERE id=%s",
+                    (mid,),
+                )
                 continue
             try:
                 text, mode = article(url, text or "")
                 conn.execute(
-                    "UPDATE materials SET text=%s,content_mode=%s WHERE id=%s",
+                    "UPDATE materials SET text=%s,content_mode=%s,last_analysis_stage='prepared',last_analysis_reason='Текст подготовлен; проверки OpenRouter ещё не завершены' WHERE id=%s",
                     (text, mode, mid),
                 )
                 candidates = [
@@ -378,13 +467,22 @@ def process(conn, limit=25, material_ids=None, pilot=False, automatic=False):
                         "SELECT id,company,event_date,card FROM radar_events WHERE created_at>now()-interval '60 days' ORDER BY id DESC LIMIT 35"
                     ).fetchall()
                 ]
-                answer = analyze(conn, title, text, pub, mode, candidates, pilot=pilot)
+                answer = analyze(
+                    conn,
+                    title,
+                    text,
+                    pub,
+                    mode,
+                    candidates,
+                    pilot=pilot,
+                    material_id=mid,
+                )
                 if answer is None:
                     conn.execute(
-                        "INSERT INTO radar_meta VALUES ('analysis_state','Суточный бюджет исчерпан; очередь отложена до завтра') ON CONFLICT(key) DO UPDATE SET value=excluded.value"
+                        "INSERT INTO radar_meta VALUES ('analysis_state','Суточный или пилотный бюджет исчерпан; очередь отложена до завтра') ON CONFLICT(key) DO UPDATE SET value=excluded.value"
                     )
                     conn.execute(
-                        "UPDATE materials SET status='deferred',retry_at=(date_trunc('day',now() AT TIME ZONE 'Europe/Moscow')+interval '1 day') AT TIME ZONE 'Europe/Moscow' WHERE id=%s",
+                        "UPDATE materials SET status='deferred',retry_at=(date_trunc('day',now() AT TIME ZONE 'Europe/Moscow')+interval '1 day') AT TIME ZONE 'Europe/Moscow',last_analysis_stage='budget_blocked',last_analysis_reason='Нельзя зарезервировать оставшийся бюджет; запрос к OpenRouter не отправлялся' WHERE id=%s",
                         (mid,),
                     )
                     break
@@ -393,7 +491,10 @@ def process(conn, limit=25, material_ids=None, pilot=False, automatic=False):
                 )
                 with conn.transaction():
                     if not answer["relevant"]:
-                        conn.execute("UPDATE materials SET status='skipped' WHERE id=%s", (mid,))
+                        conn.execute(
+                            "UPDATE materials SET status='skipped',last_analysis_stage='model_irrelevant',last_analysis_reason='Модель вернула relevant=false; API-запрос выполнен' WHERE id=%s",
+                            (mid,),
+                        )
                         continue
                     key_date = answer.get("event_date") or (
                         str(pub.date()) if pub else "material:" + str(mid)
@@ -425,12 +526,15 @@ def process(conn, limit=25, material_ids=None, pilot=False, automatic=False):
                         "INSERT INTO radar_evidence(event_id,material_id,quote) VALUES (%s,%s,%s) ON CONFLICT DO NOTHING",
                         (eid, mid, answer["quote"]),
                     )
-                    conn.execute("UPDATE materials SET status='done' WHERE id=%s", (mid,))
+                    conn.execute(
+                        "UPDATE materials SET status='done',last_analysis_stage='card_saved',last_analysis_reason='Карточка или основание события сохранены' WHERE id=%s",
+                        (mid,),
+                    )
                     found += 1
             except AnalysisPaused as exc:
                 conn.execute(
-                    "UPDATE materials SET status='deferred',retry_at=now()+interval '1 hour' WHERE id=%s",
-                    (mid,),
+                    "UPDATE materials SET status='deferred',retry_at=now()+interval '1 hour',last_analysis_stage='paused_before_request',last_analysis_reason=%s WHERE id=%s",
+                    (str(exc)[:200], mid),
                 )
                 conn.execute(
                     "INSERT INTO radar_meta VALUES ('analysis_state',%s) ON CONFLICT(key) DO UPDATE SET value=excluded.value",
@@ -439,14 +543,14 @@ def process(conn, limit=25, material_ids=None, pilot=False, automatic=False):
                 break
             except Exception as exc:
                 conn.execute(
-                    "UPDATE materials SET status='failed',attempts=attempts+1,retry_at=now()+interval '1 hour' WHERE id=%s",
-                    (mid,),
+                    "UPDATE materials SET status='failed',attempts=attempts+1,retry_at=now()+interval '1 hour',last_analysis_stage='error',last_analysis_reason=%s WHERE id=%s",
+                    ("Ошибка типа " + type(exc).__name__ + "; проверьте запись radar_spend", mid),
                 )
                 conn.execute(
                     "INSERT INTO radar_meta VALUES ('analysis_state',%s) ON CONFLICT(key) DO UPDATE SET value=excluded.value",
                     ("Ошибка анализа: " + type(exc).__name__,),
                 )
-                db.log("worker", f"Материал {mid}: {type(exc).__name__}: {str(exc)[:160]}")
+                db.log("worker", f"Материал {mid}: ошибка типа {type(exc).__name__}; детали запроса не выводятся")
                 # Pricing/network failures must not burn through the entire pending queue.
                 break
         if run_id:
