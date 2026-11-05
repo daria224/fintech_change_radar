@@ -1,9 +1,11 @@
 import os
 import unittest
 from argparse import ArgumentTypeError
+from contextlib import redirect_stdout
 from datetime import datetime, timedelta
 from decimal import Decimal
-from unittest.mock import patch
+from io import StringIO
+from unittest.mock import MagicMock, patch
 
 from radar_core.analysis import analyze, candidate, reserve, validate
 from radar_core.collect import article, canonical_url, collectable, entries, plain
@@ -211,6 +213,37 @@ class PureTests(unittest.TestCase):
         collect.assert_called_once()
         process_queue.assert_not_called()
 
+    def test_manual_pilot_passes_only_explicit_ids_when_auto_process_is_false(self):
+        from unittest.mock import Mock
+
+        from radar_core.pilot import main as pilot_main
+
+        ids = [712, 689, 159, 152]
+        titles = ["Банк запустил переводы"] * len(ids)
+        conn = Mock()
+        conn.execute.side_effect = [
+            Mock(fetchall=Mock(return_value=list(zip(ids, titles)))),
+            Mock(fetchall=Mock(return_value=[])),
+            Mock(
+                fetchall=Mock(
+                    return_value=[(mid, "new", 0, "selected", None) for mid in ids]
+                )
+            ),
+        ]
+        manager = MagicMock()
+        manager.__enter__.return_value = conn
+        with (
+            patch.dict(os.environ, {"RADAR_AI_AUTO_PROCESS": "false"}),
+            patch("radar_core.pilot.db.connect", return_value=manager),
+            patch("radar_core.pilot.db.init_schema"),
+            patch("radar_core.pilot.process", return_value=0) as process_selected,
+            redirect_stdout(StringIO()),
+        ):
+            pilot_main(["--ids", ",".join(map(str, ids))])
+        process_selected.assert_called_once_with(
+            conn, limit=4, material_ids=ids, pilot=True
+        )
+
     def test_20_labeled_prefilter_cases(self):
         # Synthetic boundary cases, not a claim of live-model quality.
         cases = [
@@ -387,6 +420,29 @@ class DatabaseTests(unittest.TestCase):
             tick(self.conn)
         process_queue.assert_not_called()
 
+    def test_manual_pilot_processes_only_selected_ids_when_auto_process_is_false(self):
+        from radar_core.analysis import process
+
+        ids = [self.material(), self.material(), self.material()]
+        selected = [ids[0], ids[2]]
+        with (
+            patch.dict(os.environ, {"RADAR_AI_AUTO_PROCESS": "false"}),
+            patch("radar_core.analysis.article", return_value=(TEXT, "полный текст")),
+            patch("radar_core.analysis.analyze", side_effect=[card(), card()]) as analyze_mock,
+        ):
+            self.assertEqual(
+                process(self.conn, limit=2, material_ids=selected, pilot=True), 2
+            )
+        statuses = dict(
+            self.conn.execute(
+                "SELECT id,status FROM materials WHERE id=ANY(%s)", (ids,)
+            ).fetchall()
+        )
+        self.assertEqual(statuses, {ids[0]: "done", ids[1]: "new", ids[2]: "done"})
+        self.assertEqual(
+            [call.kwargs["material_id"] for call in analyze_mock.call_args_list], selected
+        )
+
     def test_concurrent_budget_reservations(self):
         from concurrent.futures import ThreadPoolExecutor
 
@@ -418,7 +474,40 @@ class DatabaseTests(unittest.TestCase):
             "SELECT status,attempts FROM materials WHERE id=%s", (mid,)
         ).fetchone()
         self.assertEqual(row, ("deferred", 0))
+        diagnostic = self.conn.execute(
+            "SELECT last_analysis_stage,last_analysis_reason FROM materials WHERE id=%s",
+            (mid,),
+        ).fetchone()
+        self.assertEqual(diagnostic[0], "paused_before_request")
+        self.assertIn("не настроен", diagnostic[1])
         self.assertEqual(self.conn.execute("SELECT count(*) FROM radar_spend").fetchone()[0], 0)
+
+    def test_pilot_spend_ledger_links_started_request_to_material(self):
+        from radar_core.analysis import analyze
+
+        mid = self.material()
+        response = {
+            "usage": {"cost": ".001"},
+            "choices": [{"message": {"content": '{"relevant":false}'}}],
+        }
+        with (
+            patch.dict(
+                os.environ,
+                {"OPENROUTER_ENABLED": "true", "OPENROUTER_API_KEY": "test-only"},
+            ),
+            patch(
+                "radar_core.analysis.prices",
+                return_value=(Decimal(".0000004"), Decimal(".0000016")),
+            ),
+            patch("radar_core.analysis.request_json", return_value=response),
+        ):
+            self.assertFalse(analyze(self.conn, "test", TEXT, None, "описание", [], pilot=True, material_id=mid)["relevant"])
+        row = self.conn.execute(
+            "SELECT pilot,material_id,request_started_at,state,actual FROM radar_spend"
+        ).fetchone()
+        self.assertEqual(row[0:2], (True, mid))
+        self.assertIsNotNone(row[2])
+        self.assertEqual(row[3:], ("settled", Decimal(".001")))
 
     def test_malformed_response_is_charged_and_rejected(self):
         with (

@@ -114,7 +114,7 @@ def prices():
     return result
 
 
-def reserve(conn, amount, pilot=False):
+def reserve(conn, amount, pilot=False, material_id=None):
     day = datetime.now(MSK).date()
     with conn.transaction():
         conn.execute("SELECT pg_advisory_xact_lock(4211)")
@@ -131,8 +131,9 @@ def reserve(conn, amount, pilot=False):
             if pilot_used + amount > PILOT_BUDGET_USD:
                 return None
         return conn.execute(
-            "INSERT INTO radar_spend(budget_day,model,reserved,pilot) VALUES (%s,%s,%s,%s) RETURNING id",
-            (day, MODEL, amount, pilot),
+            """INSERT INTO radar_spend(budget_day,model,reserved,pilot,material_id)
+               VALUES (%s,%s,%s,%s,%s) RETURNING id""",
+            (day, MODEL, amount, pilot, material_id),
         ).fetchone()[0]
 
 
@@ -236,7 +237,7 @@ def validate(answer, text, candidates):
     return answer
 
 
-def analyze(conn, title, text, published, mode, candidates, pilot=False):
+def analyze(conn, title, text, published, mode, candidates, pilot=False, material_id=None):
     if (
         conn is not None
         and conn.execute("SELECT 1 FROM radar_meta WHERE key='billing_pause'").fetchone()
@@ -251,7 +252,7 @@ def analyze(conn, title, text, published, mode, candidates, pilot=False):
     try:
         p_in, p_out = prices()
     except Exception as exc:
-        raise AnalysisPaused("Цена модели недоступна: " + str(exc)[:160]) from exc
+        raise AnalysisPaused("Цена модели недоступна; платный запрос не отправлен") from exc
     content = (
         PROMPT
         + "\n"
@@ -271,7 +272,7 @@ def analyze(conn, title, text, published, mode, candidates, pilot=False):
     )
     # A UTF-8 byte is a conservative token upper bound, plus chat framing overhead.
     ceiling = p_in * (len(content.encode()) + 1024) + p_out * CONFIG["max_output_tokens"]
-    spend_id = reserve(conn, ceiling, pilot=pilot)
+    spend_id = reserve(conn, ceiling, pilot=pilot, material_id=material_id)
     if spend_id is None:
         return None
     body = {
@@ -290,7 +291,18 @@ def analyze(conn, title, text, published, mode, candidates, pilot=False):
         },
     }
     try:
+        conn.execute("UPDATE radar_spend SET request_started_at=now() WHERE id=%s", (spend_id,))
+        if material_id is not None:
+            conn.execute(
+                "UPDATE materials SET last_analysis_stage='request_started',last_analysis_reason='Запрос к OpenRouter начат' WHERE id=%s",
+                (material_id,),
+            )
         response = request_json("/chat/completions", body, os.environ["OPENROUTER_API_KEY"])
+        if material_id is not None:
+            conn.execute(
+                "UPDATE materials SET last_analysis_stage='response_received',last_analysis_reason='Ответ модели получен' WHERE id=%s",
+                (material_id,),
+            )
         cost = response.get("usage", {}).get("cost")
         if cost is not None:
             cost = Decimal(str(cost))
@@ -357,13 +369,20 @@ def process(conn, limit=25, material_ids=None, pilot=False, automatic=False):
         if rows:
             run_id = db.start_run(conn, "worker")
         for mid, title, text, url, pub, historical in rows:
+            conn.execute(
+                "UPDATE materials SET last_analysis_stage='selected',last_analysis_reason=NULL WHERE id=%s",
+                (mid,),
+            )
             if not candidate(title, text):
-                conn.execute("UPDATE materials SET status='skipped' WHERE id=%s", (mid,))
+                conn.execute(
+                    "UPDATE materials SET status='skipped',last_analysis_stage='filtered',last_analysis_reason='Не прошёл предварительный фильтр; запрос к OpenRouter не отправлялся' WHERE id=%s",
+                    (mid,),
+                )
                 continue
             try:
                 text, mode = article(url, text or "")
                 conn.execute(
-                    "UPDATE materials SET text=%s,content_mode=%s WHERE id=%s",
+                    "UPDATE materials SET text=%s,content_mode=%s,last_analysis_stage='prepared',last_analysis_reason='Текст подготовлен; проверки OpenRouter ещё не завершены' WHERE id=%s",
                     (text, mode, mid),
                 )
                 candidates = [
@@ -378,13 +397,22 @@ def process(conn, limit=25, material_ids=None, pilot=False, automatic=False):
                         "SELECT id,company,event_date,card FROM radar_events WHERE created_at>now()-interval '60 days' ORDER BY id DESC LIMIT 35"
                     ).fetchall()
                 ]
-                answer = analyze(conn, title, text, pub, mode, candidates, pilot=pilot)
+                answer = analyze(
+                    conn,
+                    title,
+                    text,
+                    pub,
+                    mode,
+                    candidates,
+                    pilot=pilot,
+                    material_id=mid,
+                )
                 if answer is None:
                     conn.execute(
-                        "INSERT INTO radar_meta VALUES ('analysis_state','Суточный бюджет исчерпан; очередь отложена до завтра') ON CONFLICT(key) DO UPDATE SET value=excluded.value"
+                        "INSERT INTO radar_meta VALUES ('analysis_state','Суточный или пилотный бюджет исчерпан; очередь отложена до завтра') ON CONFLICT(key) DO UPDATE SET value=excluded.value"
                     )
                     conn.execute(
-                        "UPDATE materials SET status='deferred',retry_at=(date_trunc('day',now() AT TIME ZONE 'Europe/Moscow')+interval '1 day') AT TIME ZONE 'Europe/Moscow' WHERE id=%s",
+                        "UPDATE materials SET status='deferred',retry_at=(date_trunc('day',now() AT TIME ZONE 'Europe/Moscow')+interval '1 day') AT TIME ZONE 'Europe/Moscow',last_analysis_stage='budget_blocked',last_analysis_reason='Нельзя зарезервировать оставшийся бюджет; запрос к OpenRouter не отправлялся' WHERE id=%s",
                         (mid,),
                     )
                     break
@@ -393,7 +421,10 @@ def process(conn, limit=25, material_ids=None, pilot=False, automatic=False):
                 )
                 with conn.transaction():
                     if not answer["relevant"]:
-                        conn.execute("UPDATE materials SET status='skipped' WHERE id=%s", (mid,))
+                        conn.execute(
+                            "UPDATE materials SET status='skipped',last_analysis_stage='model_irrelevant',last_analysis_reason='Модель вернула relevant=false; API-запрос выполнен' WHERE id=%s",
+                            (mid,),
+                        )
                         continue
                     key_date = answer.get("event_date") or (
                         str(pub.date()) if pub else "material:" + str(mid)
@@ -425,12 +456,15 @@ def process(conn, limit=25, material_ids=None, pilot=False, automatic=False):
                         "INSERT INTO radar_evidence(event_id,material_id,quote) VALUES (%s,%s,%s) ON CONFLICT DO NOTHING",
                         (eid, mid, answer["quote"]),
                     )
-                    conn.execute("UPDATE materials SET status='done' WHERE id=%s", (mid,))
+                    conn.execute(
+                        "UPDATE materials SET status='done',last_analysis_stage='card_saved',last_analysis_reason='Карточка или основание события сохранены' WHERE id=%s",
+                        (mid,),
+                    )
                     found += 1
             except AnalysisPaused as exc:
                 conn.execute(
-                    "UPDATE materials SET status='deferred',retry_at=now()+interval '1 hour' WHERE id=%s",
-                    (mid,),
+                    "UPDATE materials SET status='deferred',retry_at=now()+interval '1 hour',last_analysis_stage='paused_before_request',last_analysis_reason=%s WHERE id=%s",
+                    (str(exc)[:200], mid),
                 )
                 conn.execute(
                     "INSERT INTO radar_meta VALUES ('analysis_state',%s) ON CONFLICT(key) DO UPDATE SET value=excluded.value",
@@ -439,14 +473,14 @@ def process(conn, limit=25, material_ids=None, pilot=False, automatic=False):
                 break
             except Exception as exc:
                 conn.execute(
-                    "UPDATE materials SET status='failed',attempts=attempts+1,retry_at=now()+interval '1 hour' WHERE id=%s",
-                    (mid,),
+                    "UPDATE materials SET status='failed',attempts=attempts+1,retry_at=now()+interval '1 hour',last_analysis_stage='error',last_analysis_reason=%s WHERE id=%s",
+                    ("Ошибка типа " + type(exc).__name__ + "; проверьте запись radar_spend", mid),
                 )
                 conn.execute(
                     "INSERT INTO radar_meta VALUES ('analysis_state',%s) ON CONFLICT(key) DO UPDATE SET value=excluded.value",
                     ("Ошибка анализа: " + type(exc).__name__,),
                 )
-                db.log("worker", f"Материал {mid}: {type(exc).__name__}: {str(exc)[:160]}")
+                db.log("worker", f"Материал {mid}: ошибка типа {type(exc).__name__}; детали запроса не выводятся")
                 # Pricing/network failures must not burn through the entire pending queue.
                 break
         if run_id:
