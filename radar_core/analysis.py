@@ -85,6 +85,18 @@ def request_json(path, body=None, key=None):
         return json.loads(r.read(4_000_000))
 
 
+def parse_model_content(content):
+    """Accept the Markdown JSON fence used by the upstream model integration."""
+    fence = "```"
+    content = (
+        content.strip()
+        .removeprefix(fence + "json")
+        .removeprefix(fence)
+        .removesuffix(fence)
+    )
+    return json.loads(content)
+
+
 def http_error_category(status):
     """Return a bounded diagnostic label without retaining provider response text."""
     if status == 400:
@@ -436,7 +448,7 @@ def analyze(conn, title, text, published, mode, candidates, pilot=False, materia
                 "UPDATE radar_spend SET state='charged_upper_bound' WHERE id=%s",
                 (spend_id,),
             )
-        answer = json.loads(response["choices"][0]["message"]["content"])
+        answer = parse_model_content(response["choices"][0]["message"]["content"])
         answer = validate(answer, text, candidates)
         if answer["relevant"] and mode.startswith("Текст статьи:"):
             answer["evidence"] = min(answer["evidence"], 2)

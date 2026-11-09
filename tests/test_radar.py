@@ -369,6 +369,20 @@ class PureTests(unittest.TestCase):
         self.assertEqual(request.headers["Content-type"], "application/json")
         self.assertEqual(json.loads(request.data), body)
 
+    def test_model_content_parser_accepts_raw_and_upstream_fenced_json(self):
+        from radar_core.analysis import parse_model_content
+
+        fence = "```"
+        content = json.dumps({"relevant": False})
+        expected = {"relevant": False}
+        self.assertEqual(parse_model_content(content), expected)
+        self.assertEqual(
+            parse_model_content(fence + "json\n" + content + "\n" + fence),
+            expected,
+        )
+        with self.assertRaises(json.JSONDecodeError):
+            parse_model_content(fence + "json\nnot JSON\n" + fence)
+
     def test_mocked_openrouter_http_statuses_are_saved_as_safe_categories(self):
         from urllib.error import HTTPError
 
@@ -761,6 +775,53 @@ class DatabaseTests(unittest.TestCase):
         self.assertEqual(row[0:2], (True, mid))
         self.assertIsNotNone(row[2])
         self.assertEqual(row[3:], ("settled", Decimal(".001")))
+
+    def test_markdown_fenced_card_is_parsed_and_still_passes_full_validation(self):
+        mid = self.material()
+        expected = card()
+        fence = "```"
+        response = {
+            "usage": {"cost": ".0010766"},
+            "choices": [
+                {
+                    "message": {
+                        "content": (
+                            fence
+                            + "json\n"
+                            + json.dumps(expected, ensure_ascii=False)
+                            + "\n"
+                            + fence
+                        )
+                    }
+                }
+            ],
+        }
+        with (
+            patch.dict(
+                os.environ,
+                {"OPENROUTER_ENABLED": "true", "OPENROUTER_API_KEY": "test-only"},
+            ),
+            patch(
+                "radar_core.analysis.prices",
+                return_value=(Decimal(".0000004"), Decimal(".0000016")),
+            ),
+            patch("radar_core.analysis.request_json", return_value=response),
+        ):
+            result = analyze(
+                self.conn,
+                "test",
+                TEXT,
+                None,
+                "полный текст",
+                [],
+                pilot=True,
+                material_id=mid,
+            )
+        self.assertEqual(result, expected)
+        self.assertEqual(
+            self.conn.execute("SELECT actual,state FROM radar_spend").fetchone(),
+            (Decimal(".0010766"), "settled"),
+        )
 
     def test_malformed_response_is_charged_and_rejected(self):
         with (
