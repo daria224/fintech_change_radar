@@ -1,10 +1,11 @@
+import json
 import os
 import unittest
 from argparse import ArgumentTypeError
 from contextlib import redirect_stdout
 from datetime import datetime, timedelta
 from decimal import Decimal
-from io import StringIO
+from io import BytesIO, StringIO
 from unittest.mock import MagicMock, patch
 
 from radar_core.analysis import analyze, candidate, reserve, validate
@@ -346,6 +347,92 @@ class PureTests(unittest.TestCase):
         self.assertNotIn("example.invalid", str(raised.exception))
         request.assert_not_called()
 
+    def test_openrouter_chat_request_uses_upstream_endpoint_headers_and_shape(self):
+        from radar_core.analysis import request_json
+
+        response = MagicMock()
+        response.__enter__.return_value.read.return_value = b'{"ok":true}'
+        body = {
+            "model": "test/model",
+            "messages": [{"role": "user", "content": "test prompt"}],
+            "max_tokens": 1800,
+            "response_format": {"type": "json_object"},
+        }
+        with patch("urllib.request.urlopen", return_value=response) as urlopen:
+            self.assertEqual(
+                request_json("/chat/completions", body, "mock-token"), {"ok": True}
+            )
+        request = urlopen.call_args.args[0]
+        self.assertEqual(request.full_url, "https://openrouter.ai/api/v1/chat/completions")
+        self.assertEqual(request.get_method(), "POST")
+        self.assertEqual(request.headers["Authorization"], "Bearer mock-token")
+        self.assertEqual(request.headers["Content-type"], "application/json")
+        self.assertEqual(json.loads(request.data), body)
+
+    def test_mocked_openrouter_http_statuses_are_saved_as_safe_categories(self):
+        from urllib.error import HTTPError
+
+        from radar_core.analysis import http_error_category
+
+        categories = {
+            400: "bad_request",
+            401: "unauthorized",
+            402: "payment_required",
+            429: "rate_limited",
+        }
+        conn = MagicMock()
+        conn.execute.return_value.fetchone.return_value = None
+        secret_response = b"private response text"
+        for status, category in categories.items():
+            captured = {}
+
+            def fail_request(path, body=None, key=None):
+                captured.update(path=path, body=body, key=key)
+                raise HTTPError(
+                    "https://openrouter.invalid/chat/completions",
+                    status,
+                    "private reason",
+                    {"X-Private": "private header"},
+                    BytesIO(secret_response),
+                )
+
+            with (
+                patch.dict(
+                    os.environ,
+                    {"OPENROUTER_ENABLED": "true", "OPENROUTER_API_KEY": "test-only"},
+                ),
+                patch(
+                    "radar_core.analysis.prices",
+                    return_value=(Decimal(".0000004"), Decimal(".0000016")),
+                ),
+                patch("radar_core.analysis.reserve", return_value=77),
+                patch("radar_core.analysis.request_json", side_effect=fail_request),
+            ):
+                with self.assertRaises(HTTPError):
+                    analyze(conn, "test title", TEXT, None, "описание", [], pilot=True)
+
+            self.assertEqual(captured["path"], "/chat/completions")
+            self.assertEqual(
+                set(captured["body"]),
+                {"model", "messages", "max_tokens", "response_format"},
+            )
+            self.assertEqual(
+                captured["body"]["response_format"], {"type": "json_object"}
+            )
+            self.assertEqual(captured["key"], "test-only")
+            status_updates = [
+                call
+                for call in conn.execute.call_args_list
+                if "http_status" in call.args[0]
+            ]
+            self.assertEqual(len(status_updates), 1)
+            self.assertEqual(
+                status_updates[0].args[1], (status, category, 77)
+            )
+            self.assertNotIn("private", repr(status_updates[0].args))
+            self.assertEqual(http_error_category(status), category)
+            conn.reset_mock()
+
     def test_openrouter_prices_support_cache_ttls_and_conditional_overrides(self):
         from radar_core.analysis import prices
 
@@ -562,6 +649,14 @@ class DatabaseTests(unittest.TestCase):
             self.conn.execute("SELECT bool_and(pilot) FROM radar_spend").fetchone()[0], True
         )
 
+    def test_uncertain_pilot_reservation_remains_in_the_one_dollar_limit(self):
+        self.assertIsNotNone(reserve(self.conn, Decimal(".60"), pilot=True))
+        self.conn.execute(
+            "UPDATE radar_spend SET state='uncertain',actual=NULL,budget_day=budget_day-1"
+        )
+        self.assertIsNone(reserve(self.conn, Decimal(".4001"), pilot=True))
+        self.assertIsNotNone(reserve(self.conn, Decimal(".40"), pilot=True))
+
     def test_worker_does_not_process_queue_without_explicit_auto_mode(self):
         from worker.main import tick
 
@@ -576,23 +671,28 @@ class DatabaseTests(unittest.TestCase):
     def test_manual_pilot_processes_only_selected_ids_when_auto_process_is_false(self):
         from radar_core.analysis import process
 
-        ids = [self.material(), self.material(), self.material()]
-        selected = [ids[0], ids[2]]
+        ids = [self.material(), self.material(), self.material(), self.material()]
+        selected = [ids[0], ids[2], ids[3]]
         with (
             patch.dict(os.environ, {"RADAR_AI_AUTO_PROCESS": "false"}),
             patch("radar_core.analysis.article", return_value=(TEXT, "полный текст")),
-            patch("radar_core.analysis.analyze", side_effect=[card(), card()]) as analyze_mock,
+            patch(
+                "radar_core.analysis.analyze", side_effect=[card(), card(), card()]
+            ) as analyze_mock,
         ):
             self.assertEqual(
-                process(self.conn, limit=2, material_ids=selected, pilot=True), 2
+                process(self.conn, limit=3, material_ids=selected, pilot=True), 3
             )
         statuses = dict(
             self.conn.execute(
                 "SELECT id,status FROM materials WHERE id=ANY(%s)", (ids,)
             ).fetchall()
         )
-        self.assertEqual(statuses, {ids[0]: "done", ids[1]: "new", ids[2]: "done"})
         self.assertEqual(
+            statuses,
+            {ids[0]: "done", ids[1]: "new", ids[2]: "done", ids[3]: "done"},
+        )
+        self.assertCountEqual(
             [call.kwargs["material_id"] for call in analyze_mock.call_args_list], selected
         )
 
@@ -705,6 +805,93 @@ class DatabaseTests(unittest.TestCase):
         self.assertEqual(row[0], "charged_upper_bound")
         self.assertIsNone(row[1])
         self.assertGreater(row[2], 0)
+
+    def test_openrouter_http_errors_are_recorded_without_response_details(self):
+        from urllib.error import HTTPError
+
+        from radar_core.analysis import http_error_category
+
+        categories = {
+            400: "bad_request",
+            401: "unauthorized",
+            402: "payment_required",
+            429: "rate_limited",
+        }
+        self.assertEqual(
+            {status: http_error_category(status) for status in categories}, categories
+        )
+        mid = self.material()
+        for status, category in categories.items():
+            secret_response = b"private provider response must not be stored"
+            with (
+                patch.dict(
+                    os.environ,
+                    {"OPENROUTER_ENABLED": "true", "OPENROUTER_API_KEY": "test-only"},
+                ),
+                patch(
+                    "radar_core.analysis.prices",
+                    return_value=(Decimal(".0000004"), Decimal(".0000016")),
+                ),
+                patch(
+                    "radar_core.analysis.request_json",
+                    side_effect=HTTPError(
+                        "https://openrouter.invalid/chat/completions",
+                        status,
+                        "private error detail",
+                        {"X-Private": "private header"},
+                        BytesIO(secret_response),
+                    ),
+                ),
+            ):
+                with self.assertRaises(HTTPError):
+                    analyze(
+                        self.conn,
+                        "test",
+                        TEXT,
+                        None,
+                        "описание",
+                        [],
+                        pilot=True,
+                        material_id=mid,
+                    )
+            row = self.conn.execute(
+                "SELECT http_status,error_category,state,actual,reserved FROM radar_spend ORDER BY id DESC LIMIT 1"
+            ).fetchone()
+            self.assertEqual(row[:3], (status, category, "uncertain"))
+            self.assertIsNone(row[3])
+            self.assertGreater(row[4], 0)
+            self.assertNotIn("private", str(row))
+
+    def test_unknown_tariff_still_blocks_before_paid_request(self):
+        from radar_core.analysis import AnalysisPaused, PricingDataError
+
+        mid = self.material()
+        with (
+            patch.dict(
+                os.environ,
+                {"OPENROUTER_ENABLED": "true", "OPENROUTER_API_KEY": "test-only"},
+            ),
+            patch(
+                "radar_core.analysis.prices",
+                side_effect=PricingDataError("unknown tariff"),
+            ),
+            patch("radar_core.analysis.request_json") as request,
+        ):
+            with self.assertRaises(AnalysisPaused):
+                analyze(
+                    self.conn,
+                    "test",
+                    TEXT,
+                    None,
+                    "описание",
+                    [],
+                    pilot=True,
+                    material_id=mid,
+                )
+        request.assert_not_called()
+        self.assertEqual(
+            self.conn.execute("SELECT count(*) FROM radar_spend").fetchone()[0], 0
+        )
 
     def test_collection_schedule_runs_once_per_slot(self):
         from worker.main import tick
