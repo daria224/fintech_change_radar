@@ -28,11 +28,14 @@ CREATE TABLE IF NOT EXISTS radar_spend (
  reserved numeric NOT NULL CHECK(reserved >= 0), actual numeric,
  state text NOT NULL DEFAULT 'reserved', created_at timestamptz NOT NULL DEFAULT now(),
  pilot boolean NOT NULL DEFAULT false,
- material_id integer REFERENCES materials(id), request_started_at timestamptz
+ material_id integer REFERENCES materials(id), request_started_at timestamptz,
+ http_status integer, error_category text
 );
 ALTER TABLE radar_spend ADD COLUMN IF NOT EXISTS pilot boolean NOT NULL DEFAULT false;
 ALTER TABLE radar_spend ADD COLUMN IF NOT EXISTS material_id integer REFERENCES materials(id);
 ALTER TABLE radar_spend ADD COLUMN IF NOT EXISTS request_started_at timestamptz;
+ALTER TABLE radar_spend ADD COLUMN IF NOT EXISTS http_status integer;
+ALTER TABLE radar_spend ADD COLUMN IF NOT EXISTS error_category text;
 CREATE INDEX IF NOT EXISTS radar_spend_day ON radar_spend(budget_day);
 CREATE TABLE IF NOT EXISTS radar_digests (
  day date PRIMARY KEY, text text NOT NULL, event_ids bigint[] NOT NULL,

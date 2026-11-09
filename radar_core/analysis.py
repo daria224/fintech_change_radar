@@ -7,6 +7,7 @@ import re
 import urllib.request
 from datetime import date, datetime
 from decimal import Decimal
+from urllib.error import HTTPError
 
 from psycopg.types.json import Jsonb
 
@@ -82,6 +83,25 @@ def request_json(path, body=None, key=None):
     )
     with urllib.request.urlopen(req, timeout=90) as r:
         return json.loads(r.read(4_000_000))
+
+
+def http_error_category(status):
+    """Return a bounded diagnostic label without retaining provider response text."""
+    if status == 400:
+        return "bad_request"
+    if status == 401:
+        return "unauthorized"
+    if status == 402:
+        return "payment_required"
+    if status == 403:
+        return "forbidden"
+    if status == 404:
+        return "not_found"
+    if status == 429:
+        return "rate_limited"
+    if 500 <= status <= 599:
+        return "upstream_server_error"
+    return "http_error"
 
 
 def prices():
@@ -382,16 +402,7 @@ def analyze(conn, title, text, published, mode, candidates, pilot=False, materia
         "model": MODEL,
         "messages": [{"role": "user", "content": content}],
         "max_tokens": CONFIG["max_output_tokens"],
-        "temperature": 0,
         "response_format": {"type": "json_object"},
-        "provider": {
-            "require_parameters": True,
-            "max_price": {
-                "prompt": float(p_in * 1000000),
-                "completion": float(p_out * 1000000),
-                "request": 0,
-            },
-        },
     }
     try:
         conn.execute("UPDATE radar_spend SET request_started_at=now() WHERE id=%s", (spend_id,))
@@ -434,12 +445,22 @@ def analyze(conn, title, text, published, mode, candidates, pilot=False, materia
             answer["evidence"] = min(answer["evidence"], 1)
             answer["limitations"] += " Анализ основан на описании; полный текст недоступен."
         return answer
-    except Exception:
+    except Exception as exc:
         # Ambiguous network outcomes retain their full reservation, including across restart.
-        conn.execute(
-            "UPDATE radar_spend SET state=CASE WHEN state='reserved' THEN 'uncertain' ELSE state END WHERE id=%s",
-            (spend_id,),
-        )
+        if isinstance(exc, HTTPError):
+            conn.execute(
+                """UPDATE radar_spend
+                   SET state=CASE WHEN state='reserved' THEN 'uncertain' ELSE state END,
+                       http_status=%s,error_category=%s
+                   WHERE id=%s""",
+                (exc.code, http_error_category(exc.code), spend_id),
+            )
+            exc.close()
+        else:
+            conn.execute(
+                "UPDATE radar_spend SET state=CASE WHEN state='reserved' THEN 'uncertain' ELSE state END WHERE id=%s",
+                (spend_id,),
+            )
         raise
 
 
