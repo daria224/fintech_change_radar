@@ -325,6 +325,27 @@ class PureTests(unittest.TestCase):
                 analyze(None, "title", "text", None, "описание", [])
             call.assert_not_called()
 
+    def test_price_transport_error_message_does_not_expose_exception_details(self):
+        from radar_core.analysis import AnalysisPaused
+
+        with (
+            patch.dict(
+                os.environ,
+                {"OPENROUTER_ENABLED": "true", "OPENROUTER_API_KEY": "test-only"},
+            ),
+            patch(
+                "radar_core.analysis.prices",
+                side_effect=OSError("https://example.invalid/?key=must-not-leak"),
+            ),
+            patch("radar_core.analysis.request_json") as request,
+        ):
+            with self.assertRaises(AnalysisPaused) as raised:
+                analyze(None, "title", "text", None, "описание", [])
+        self.assertIn("каталог цен", str(raised.exception))
+        self.assertNotIn("must-not-leak", str(raised.exception))
+        self.assertNotIn("example.invalid", str(raised.exception))
+        request.assert_not_called()
+
     def test_openrouter_prices_support_cache_ttls_and_conditional_overrides(self):
         from radar_core.analysis import prices
 
@@ -365,6 +386,31 @@ class PureTests(unittest.TestCase):
             )
         request.assert_called_once_with("/models")
 
+    def test_openrouter_prices_ignore_web_search_fee_for_text_only_requests(self):
+        from radar_core.analysis import prices
+
+        catalog = {
+            "data": [
+                {
+                    "id": "test/model",
+                    "pricing": {
+                        "prompt": "0.000001",
+                        "completion": "0.000002",
+                        "input_cache_write_1h": "0.000004",
+                        "web_search": "10.0",
+                    },
+                }
+            ]
+        }
+        with (
+            patch("radar_core.analysis.MODEL", "test/model"),
+            patch("radar_core.analysis.request_json", return_value=catalog) as request,
+        ):
+            self.assertEqual(
+                prices(), (Decimal("0.000004"), Decimal("0.000002"))
+            )
+        request.assert_called_once_with("/models")
+
     def test_unknown_nonzero_openrouter_fee_blocks_paid_chat_call(self):
         catalog = {
             "data": [
@@ -387,9 +433,33 @@ class PureTests(unittest.TestCase):
             patch("radar_core.analysis.MODEL", "test/model"),
             patch("radar_core.analysis.request_json", return_value=catalog) as request,
         ):
-            with self.assertRaises(ValueError):
+            with self.assertRaises(ValueError) as raised:
                 analyze(None, "title", "text", None, "описание", [])
+        self.assertIn("internal_reasoning", str(raised.exception))
+        self.assertNotIn("test-only", str(raised.exception))
         request.assert_called_once_with("/models")
+
+    def test_malformed_unused_feature_fee_still_fails_closed(self):
+        from radar_core.analysis import prices
+
+        catalog = {
+            "data": [
+                {
+                    "id": "test/model",
+                    "pricing": {
+                        "prompt": "0.000001",
+                        "completion": "0.000002",
+                        "web_search": "unknown",
+                    },
+                }
+            ]
+        }
+        with (
+            patch("radar_core.analysis.MODEL", "test/model"),
+            patch("radar_core.analysis.request_json", return_value=catalog),
+        ):
+            with self.assertRaises(ValueError):
+                prices()
 
     def test_cost_ceiling_includes_conservative_input_and_output_bounds(self):
         from radar_core.analysis import estimate_cost_ceiling

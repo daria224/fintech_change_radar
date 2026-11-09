@@ -27,6 +27,10 @@ class AnalysisPaused(ValueError):
     """No safe paid request can be made; preserve the item for later."""
 
 
+class PricingDataError(ValueError):
+    """The model's published pricing cannot be safely bounded for our request."""
+
+
 def priority(title, text):
     haystack = title + " " + (text or "")
     groups = CONFIG["watchlist"]
@@ -83,10 +87,10 @@ def request_json(path, body=None, key=None):
 def prices():
     model = next((m for m in request_json("/models")["data"] if m["id"] == MODEL), None)
     if not model:
-        raise ValueError("Модель отсутствует в каталоге цен")
+        raise PricingDataError("Модель отсутствует в каталоге цен")
     pricing = model.get("pricing")
     if not isinstance(pricing, dict):
-        raise ValueError("Отсутствует или некорректна структура тарифов модели")
+        raise PricingDataError("Отсутствует или некорректна структура тарифов модели")
 
     # Cache token rates and conditional overrides are included in a conservative
     # maximum so the reservation remains safe for every route and pricing tier.
@@ -100,6 +104,10 @@ def prices():
     supported_rates = set(input_keys + output_keys)
     pricing_metadata = {"discount", "overrides"}
     override_conditions = {"min_prompt_tokens", "utc_days", "utc_start", "utc_end"}
+    unused_feature_fees = {"web_search"}
+
+    def safe_field_name(field):
+        return re.sub(r"[^a-zA-Z0-9_.-]", "_", str(field))[:48] or "unknown"
 
     def read_price(value, field):
         if value is None:
@@ -107,63 +115,82 @@ def prices():
         try:
             parsed = Decimal(str(value))
         except Exception as exc:
-            raise ValueError("Невозможно оценить тариф модели: " + field) from exc
+            raise PricingDataError(
+                "Невозможно оценить тариф модели: " + safe_field_name(field)
+            ) from exc
         if not parsed.is_finite() or parsed < 0:
-            raise ValueError("Некорректный тариф модели: " + field)
+            raise PricingDataError("Некорректный тариф модели: " + safe_field_name(field))
         return parsed
 
     def collect_rates(rate_object, allowed_conditions=()):
         if not isinstance(rate_object, dict):
-            raise ValueError("Некорректная структура тарифов модели")
+            raise PricingDataError("Некорректная структура тарифов модели")
         collected = {key: [] for key in supported_rates}
         for key, value in rate_object.items():
             if key in allowed_conditions:
                 if key == "min_prompt_tokens":
                     threshold = read_price(value, key)
                     if threshold is None:
-                        raise ValueError("Невозможно оценить условие тарифа модели: " + key)
+                        raise PricingDataError(
+                            "Невозможно оценить условие тарифа модели: "
+                            + safe_field_name(key)
+                        )
                 elif key in ("utc_start", "utc_end"):
                     if not isinstance(value, (int, float)) or isinstance(value, bool):
-                        raise ValueError("Некорректное условие тарифа модели: " + key)
+                        raise PricingDataError(
+                            "Некорректное условие тарифа модели: " + safe_field_name(key)
+                        )
                 elif key == "utc_days":
                     if not isinstance(value, list) or any(not isinstance(day, str) for day in value):
-                        raise ValueError("Некорректное условие тарифа модели: " + key)
+                        raise PricingDataError(
+                            "Некорректное условие тарифа модели: " + safe_field_name(key)
+                        )
                 continue
             if key in pricing_metadata:
                 if key == "discount" and value is not None:
                     discount = read_price(value, key)
                     if discount > 1:
-                        raise ValueError("Некорректная скидка модели")
+                        raise PricingDataError("Некорректная скидка модели")
                 elif key == "overrides" and allowed_conditions:
-                    raise ValueError("Некорректная вложенная структура тарифов модели")
+                    raise PricingDataError("Некорректная вложенная структура тарифов модели")
                 continue
             if key in supported_rates:
                 parsed = read_price(value, key)
                 if parsed is not None:
                     collected[key].append(parsed)
                 continue
-            # A text-only request cannot use image/audio/search fees, and the
-            # budgeter does not model flat or separate reasoning charges. Reject
-            # every nonzero or malformed unsupported field instead of ignoring it.
+            if key in unused_feature_fees:
+                # Our request contains text only and no tools, so OpenRouter's
+                # separate web-search fee cannot apply. Validate its shape while
+                # excluding it from the token-based reservation ceiling.
+                read_price(value, key)
+                continue
+            # Do not silently ignore any other additional charge. Reject every
+            # nonzero or malformed unclassified field because this estimator
+            # cannot safely bound it.
             if value is None:
                 continue
             try:
                 unsupported = Decimal(str(value))
             except Exception as exc:
-                raise ValueError("Неподдерживаемая структура стоимости: " + key) from exc
+                raise PricingDataError(
+                    "Неподдерживаемая структура стоимости: " + safe_field_name(key)
+                ) from exc
             if not unsupported.is_finite() or unsupported != 0:
-                raise ValueError("Неподдерживаемая дополнительная стоимость: " + key)
+                raise PricingDataError(
+                    "Неподдерживаемая дополнительная стоимость: " + safe_field_name(key)
+                )
         return collected
 
     rates = collect_rates(pricing)
     if not rates["prompt"] or not rates["completion"]:
-        raise ValueError("Не указаны обязательные цены входа или выхода модели")
+        raise PricingDataError("Не указаны обязательные цены входа или выхода модели")
 
     overrides = pricing.get("overrides", [])
     if overrides is None:
         overrides = []
     if not isinstance(overrides, list):
-        raise ValueError("Некорректная структура условных тарифов модели")
+        raise PricingDataError("Некорректная структура условных тарифов модели")
     for override in overrides:
         override_rates = collect_rates(override, override_conditions)
         for key in supported_rates:
@@ -322,8 +349,14 @@ def analyze(conn, title, text, published, mode, candidates, pilot=False, materia
         raise AnalysisPaused("Модель OpenRouter не настроена")
     try:
         p_in, p_out = prices()
+    except PricingDataError as exc:
+        raise AnalysisPaused(
+            f"Цена модели не прошла проверку ({exc}); платный запрос не отправлен"
+        ) from exc
     except Exception as exc:
-        raise AnalysisPaused("Цена модели недоступна; платный запрос не отправлен") from exc
+        raise AnalysisPaused(
+            "Не удалось получить каталог цен модели; платный запрос не отправлен"
+        ) from exc
     content = (
         PROMPT
         + "\n"
