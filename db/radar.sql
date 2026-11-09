@@ -8,6 +8,7 @@ ALTER TABLE materials ADD COLUMN IF NOT EXISTS attempts integer NOT NULL DEFAULT
 ALTER TABLE materials ADD COLUMN IF NOT EXISTS retry_at timestamptz;
 ALTER TABLE materials ADD COLUMN IF NOT EXISTS last_analysis_stage text;
 ALTER TABLE materials ADD COLUMN IF NOT EXISTS last_analysis_reason text;
+ALTER TABLE materials ADD COLUMN IF NOT EXISTS analysis_retry_blocked boolean NOT NULL DEFAULT false;
 CREATE TABLE IF NOT EXISTS radar_source_checks (
  id bigserial PRIMARY KEY, source_id integer REFERENCES sources(id), run_id integer REFERENCES runs(id),
  checked_at timestamptz NOT NULL DEFAULT now(), ok boolean NOT NULL,
@@ -29,13 +30,19 @@ CREATE TABLE IF NOT EXISTS radar_spend (
  state text NOT NULL DEFAULT 'reserved', created_at timestamptz NOT NULL DEFAULT now(),
  pilot boolean NOT NULL DEFAULT false,
  material_id integer REFERENCES materials(id), request_started_at timestamptz,
- http_status integer, error_category text
+ http_status integer, error_category text, finish_reason text,
+ model_content_length integer, json_error_category text,
+ possible_truncation boolean NOT NULL DEFAULT false
 );
 ALTER TABLE radar_spend ADD COLUMN IF NOT EXISTS pilot boolean NOT NULL DEFAULT false;
 ALTER TABLE radar_spend ADD COLUMN IF NOT EXISTS material_id integer REFERENCES materials(id);
 ALTER TABLE radar_spend ADD COLUMN IF NOT EXISTS request_started_at timestamptz;
 ALTER TABLE radar_spend ADD COLUMN IF NOT EXISTS http_status integer;
 ALTER TABLE radar_spend ADD COLUMN IF NOT EXISTS error_category text;
+ALTER TABLE radar_spend ADD COLUMN IF NOT EXISTS finish_reason text;
+ALTER TABLE radar_spend ADD COLUMN IF NOT EXISTS model_content_length integer;
+ALTER TABLE radar_spend ADD COLUMN IF NOT EXISTS json_error_category text;
+ALTER TABLE radar_spend ADD COLUMN IF NOT EXISTS possible_truncation boolean NOT NULL DEFAULT false;
 CREATE INDEX IF NOT EXISTS radar_spend_day ON radar_spend(budget_day);
 CREATE TABLE IF NOT EXISTS radar_digests (
  day date PRIMARY KEY, text text NOT NULL, event_ids bigint[] NOT NULL,
