@@ -32,6 +32,15 @@ class PricingDataError(ValueError):
     """The model's published pricing cannot be safely bounded for our request."""
 
 
+class ModelContentJSONError(ValueError):
+    """A model completion was received and charged, but its content was not JSON."""
+
+    def __init__(self, category, possible_truncation):
+        self.category = category
+        self.possible_truncation = possible_truncation
+        super().__init__("Ответ модели не является полным JSON: " + category)
+
+
 def priority(title, text):
     haystack = title + " " + (text or "")
     groups = CONFIG["watchlist"]
@@ -85,16 +94,42 @@ def request_json(path, body=None, key=None):
         return json.loads(r.read(4_000_000))
 
 
-def parse_model_content(content):
-    """Accept the Markdown JSON fence used by the upstream model integration."""
+def normalize_model_content(content):
+    """Remove the simple Markdown fence accepted by the upstream integration."""
     fence = "```"
-    content = (
+    return (
         content.strip()
         .removeprefix(fence + "json")
         .removeprefix(fence)
         .removesuffix(fence)
     )
+
+
+def parse_model_content(content):
+    """Accept raw JSON or the simple Markdown fence used by upstream."""
+    content = normalize_model_content(content)
     return json.loads(content)
+
+
+def model_json_error_category(error, normalized_content):
+    if error.msg == "Extra data":
+        return "extra_data"
+    if error.pos >= len(normalized_content.rstrip()):
+        return "unexpected_end"
+    if error.msg == "Unterminated string starting at":
+        return "unterminated_string"
+    if error.msg == "Expecting value":
+        return "missing_value"
+    return "invalid_json"
+
+
+def safe_finish_reason(value):
+    if not isinstance(value, str):
+        return None
+    value = value.strip().casefold()
+    if re.fullmatch(r"[a-z0-9_-]{1,32}", value):
+        return value
+    return "other"
 
 
 def http_error_category(status):
@@ -448,7 +483,30 @@ def analyze(conn, title, text, published, mode, candidates, pilot=False, materia
                 "UPDATE radar_spend SET state='charged_upper_bound' WHERE id=%s",
                 (spend_id,),
             )
-        answer = parse_model_content(response["choices"][0]["message"]["content"])
+        choice = response["choices"][0]
+        model_content = choice["message"]["content"]
+        finish_reason = safe_finish_reason(choice.get("finish_reason"))
+        content_length = len(model_content) if isinstance(model_content, str) else None
+        conn.execute(
+            """UPDATE radar_spend SET finish_reason=%s,model_content_length=%s,
+               json_error_category=NULL,possible_truncation=false WHERE id=%s""",
+            (finish_reason, content_length, spend_id),
+        )
+        normalized_content = normalize_model_content(model_content)
+        try:
+            answer = json.loads(normalized_content)
+        except json.JSONDecodeError as exc:
+            category = model_json_error_category(exc, normalized_content)
+            possible_truncation = finish_reason == "length" or category in (
+                "unexpected_end",
+                "unterminated_string",
+            )
+            conn.execute(
+                """UPDATE radar_spend SET json_error_category=%s,possible_truncation=%s
+                   WHERE id=%s""",
+                (category, possible_truncation, spend_id),
+            )
+            raise ModelContentJSONError(category, possible_truncation) from None
         answer = validate(answer, text, candidates)
         if answer["relevant"] and mode.startswith("Текст статьи:"):
             answer["evidence"] = min(answer["evidence"], 2)
@@ -494,6 +552,7 @@ def process(conn, limit=25, material_ids=None, pilot=False, automatic=False):
     try:
         query = """SELECT id,title,text,url,published_at,historical FROM materials
             WHERE radar_version IS NOT NULL AND status IN ('new','deferred','failed') AND attempts<3
+            AND NOT analysis_retry_blocked
             AND (retry_at IS NULL OR retry_at<=now())
             AND (%s::integer[] IS NULL OR id=ANY(%s))
             ORDER BY historical, published_at DESC NULLS LAST,id LIMIT 300"""
@@ -597,6 +656,19 @@ def process(conn, limit=25, material_ids=None, pilot=False, automatic=False):
                         (mid,),
                     )
                     found += 1
+            except ModelContentJSONError as exc:
+                conn.execute(
+                    """UPDATE materials SET status='failed',attempts=attempts+1,
+                       retry_at=now()+interval '1 hour',analysis_retry_blocked=true,
+                       last_analysis_stage='error',last_analysis_reason=%s WHERE id=%s""",
+                    ("Ошибка JSON ответа модели: " + exc.category, mid),
+                )
+                conn.execute(
+                    "INSERT INTO radar_meta VALUES ('analysis_state',%s) ON CONFLICT(key) DO UPDATE SET value=excluded.value",
+                    ("Ошибка JSON ответа модели: " + exc.category, ),
+                )
+                db.log("worker", f"Материал {mid}: ответ модели не разобран ({exc.category}); повтор заблокирован")
+                continue
             except AnalysisPaused as exc:
                 conn.execute(
                     "UPDATE materials SET status='deferred',retry_at=now()+interval '1 hour',last_analysis_stage='paused_before_request',last_analysis_reason=%s WHERE id=%s",

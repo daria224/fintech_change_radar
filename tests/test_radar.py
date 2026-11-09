@@ -383,6 +383,96 @@ class PureTests(unittest.TestCase):
         with self.assertRaises(json.JSONDecodeError):
             parse_model_content(fence + "json\nnot JSON\n" + fence)
 
+    def test_model_json_error_diagnostics_are_safe_and_identify_possible_truncation(self):
+        from radar_core.analysis import ModelContentJSONError
+
+        returned_content = '{"relevant":'
+        conn = MagicMock()
+        conn.execute.return_value.fetchone.return_value = Decimal("0")
+        with (
+            patch.dict(
+                os.environ,
+                {"OPENROUTER_ENABLED": "true", "OPENROUTER_API_KEY": "test-only"},
+            ),
+            patch(
+                "radar_core.analysis.prices",
+                return_value=(Decimal(".0000004"), Decimal(".0000016")),
+            ),
+            patch("radar_core.analysis.reserve", return_value=77),
+            patch(
+                "radar_core.analysis.request_json",
+                return_value={
+                    "usage": {"cost": ".001"},
+                    "choices": [
+                        {
+                            "finish_reason": "length",
+                            "message": {"content": returned_content},
+                        }
+                    ],
+                },
+            ),
+        ):
+            with self.assertRaises(ModelContentJSONError) as raised:
+                analyze(conn, "test title", TEXT, None, "полный текст", [], pilot=True)
+
+        self.assertEqual(raised.exception.category, "unexpected_end")
+        self.assertTrue(raised.exception.possible_truncation)
+        diagnostic_updates = [
+            call for call in conn.execute.call_args_list if "finish_reason=%s" in call.args[0]
+        ]
+        self.assertEqual(len(diagnostic_updates), 1)
+        self.assertEqual(diagnostic_updates[0].args[1], ("length", len(returned_content), 77))
+        error_updates = [
+            call for call in conn.execute.call_args_list if "json_error_category=%s" in call.args[0]
+        ]
+        self.assertEqual(error_updates[0].args[1], ("unexpected_end", True, 77))
+        self.assertNotIn(returned_content, repr(diagnostic_updates + error_updates))
+
+    def test_process_continues_after_json_error_and_saves_only_relevant_card(self):
+        from radar_core.analysis import ModelContentJSONError, process
+
+        rows = [
+            (301, "Банк запустил новый перевод", TEXT, "https://example.test/1", None, False),
+            (302, "Банк опубликовал квартальную отчётность", "Банк сообщил о росте чистой прибыли за год.", "https://example.test/2", None, False),
+            (303, "Банк начал пилот платежей", "Банк тестирует подтверждение платежа голосом в мобильном приложении.", "https://example.test/3", None, False),
+        ]
+        inserted = []
+
+        def execute(statement, params=None):
+            if "pg_try_advisory_lock" in statement:
+                return MagicMock(fetchone=MagicMock(return_value=(True,)))
+            if "SELECT id,title,text,url,published_at,historical FROM materials" in statement:
+                return MagicMock(fetchall=MagicMock(return_value=rows))
+            if "SELECT id,company,event_date,card FROM radar_events" in statement:
+                return MagicMock(fetchall=MagicMock(return_value=[]))
+            if "INSERT INTO radar_events" in statement:
+                inserted.append(("event", params))
+                return MagicMock(fetchone=MagicMock(return_value=(901,)))
+            if "INSERT INTO radar_evidence" in statement:
+                inserted.append(("evidence", params))
+            if "analysis_retry_blocked=true" in statement:
+                inserted.append(("blocked", params))
+            if "status='skipped'" in statement:
+                inserted.append(("skipped", params))
+            return MagicMock(fetchone=MagicMock(return_value=(None,)))
+
+        conn = MagicMock()
+        conn.execute.side_effect = execute
+        answers = [card(), {"relevant": False}, ModelContentJSONError("unexpected_end", True)]
+        with (
+            patch("db.start_run", return_value=55),
+            patch("db.finish_run"),
+            patch("db.log"),
+            patch("radar_core.analysis.article", side_effect=lambda url, text: (text, "полный текст")),
+            patch("radar_core.analysis.analyze", side_effect=answers) as analyze_mock,
+        ):
+            found = process(conn, limit=3, material_ids=[301, 302, 303], pilot=True)
+
+        self.assertEqual(found, 1)
+        self.assertEqual(analyze_mock.call_count, 3)
+        self.assertEqual([item[0] for item in inserted], ["event", "evidence", "skipped", "blocked"])
+        self.assertIn("unexpected_end", repr(inserted[-1]))
+
     def test_mocked_openrouter_http_statuses_are_saved_as_safe_categories(self):
         from urllib.error import HTTPError
 
@@ -646,6 +736,20 @@ class DatabaseTests(unittest.TestCase):
             self.conn.execute("SELECT count(*) FROM sources WHERE active").fetchone()[0],
             10,
         )
+        spend_columns = {
+            row[0]
+            for row in self.conn.execute(
+                "SELECT column_name FROM information_schema.columns WHERE table_name='radar_spend'"
+            ).fetchall()
+        }
+        self.assertTrue(
+            {
+                "finish_reason",
+                "model_content_length",
+                "json_error_category",
+                "possible_truncation",
+            }.issubset(spend_columns)
+        )
 
     def test_budget_is_shared_and_persistent(self):
         self.assertIsNotNone(reserve(self.conn, Decimal(".7")))
@@ -847,6 +951,92 @@ class DatabaseTests(unittest.TestCase):
             self.conn.execute("SELECT actual FROM radar_spend").fetchone()[0],
             Decimal(".001"),
         )
+
+    def test_three_material_chain_saves_card_skips_irrelevant_and_blocks_bad_json_retry(self):
+        from radar_core.analysis import process
+
+        ids = [self.material() for _ in range(3)]
+        titles = [
+            "Банк запустил новый сервис переводов",
+            "Банк опубликовал общий финансовый отчёт",
+            "Банк начал пилот подтверждения платежа",
+        ]
+        texts = [
+            TEXT,
+            "Банк сообщил о росте чистой прибыли за год.",
+            "Банк тестирует подтверждение платежа голосом в мобильном приложении.",
+        ]
+        for material_id, title, text in zip(ids, titles, texts, strict=True):
+            self.conn.execute(
+                "UPDATE materials SET title=%s,text=%s WHERE id=%s",
+                (title, text, material_id),
+            )
+
+        relevant_content = json.dumps(card(), ensure_ascii=False)
+
+        def mock_request(path, body=None, key=None):
+            self.assertEqual(path, "/chat/completions")
+            request_content = body["messages"][0]["content"]
+            if titles[0] in request_content:
+                content, finish = relevant_content, "stop"
+            elif titles[1] in request_content:
+                content, finish = '{"relevant":false}', "stop"
+            elif titles[2] in request_content:
+                content, finish = '{"relevant":', "length"
+            else:
+                self.fail("Unexpected test material in mock request")
+            return {
+                "usage": {"cost": ".001"},
+                "choices": [{"finish_reason": finish, "message": {"content": content}}],
+            }
+
+        with (
+            patch.dict(
+                os.environ,
+                {"OPENROUTER_ENABLED": "true", "OPENROUTER_API_KEY": "test-only"},
+            ),
+            patch(
+                "radar_core.analysis.prices",
+                return_value=(Decimal(".0000004"), Decimal(".0000016")),
+            ),
+            patch("radar_core.analysis.request_json", side_effect=mock_request) as request,
+            patch("radar_core.analysis.article", side_effect=lambda url, text: (text, "полный текст")),
+        ):
+            self.assertEqual(process(self.conn, limit=3, material_ids=ids, pilot=True), 1)
+
+        self.assertEqual(request.call_count, 3)
+        statuses = self.conn.execute(
+            "SELECT id,status,analysis_retry_blocked FROM materials WHERE id=ANY(%s) ORDER BY id",
+            (ids,),
+        ).fetchall()
+        self.assertEqual(
+            statuses,
+            [(ids[0], "done", False), (ids[1], "skipped", False), (ids[2], "failed", True)],
+        )
+        self.assertEqual(self.conn.execute("SELECT count(*) FROM radar_events").fetchone()[0], 1)
+        self.assertEqual(self.conn.execute("SELECT count(*) FROM radar_evidence").fetchone()[0], 1)
+        diagnostics = self.conn.execute(
+            """SELECT material_id,finish_reason,model_content_length,json_error_category,
+                      possible_truncation,actual
+               FROM radar_spend WHERE material_id=ANY(%s) ORDER BY material_id""",
+            (ids,),
+        ).fetchall()
+        self.assertEqual([row[0] for row in diagnostics], ids)
+        self.assertEqual(diagnostics[0][1], "stop")
+        self.assertEqual(diagnostics[0][3:5], (None, False))
+        self.assertEqual(diagnostics[1][1], "stop")
+        self.assertEqual(diagnostics[1][3:5], (None, False))
+        self.assertEqual(diagnostics[2][1], "length")
+        self.assertEqual(diagnostics[2][2], len('{"relevant":'))
+        self.assertEqual(diagnostics[2][3:5], ("unexpected_end", True))
+        self.assertEqual([row[5] for row in diagnostics], [Decimal(".001")] * 3)
+
+        from radar_core.pilot import eligible
+
+        self.assertNotIn(ids[2], [row[0] for row in eligible(self.conn)])
+        with patch("radar_core.analysis.analyze") as retry:
+            self.assertEqual(process(self.conn, automatic=True), 0)
+        retry.assert_not_called()
 
     def test_missing_cost_retains_upper_bound(self):
         response = {"choices": [{"message": {"content": '{"relevant":false}'}}]}

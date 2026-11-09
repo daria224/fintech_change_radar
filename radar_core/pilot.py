@@ -10,7 +10,8 @@ def eligible(conn, limit=20):
     rows = conn.execute(
         """SELECT id,title,published_at,status FROM materials
            WHERE radar_version IS NOT NULL AND status IN ('new','deferred','failed')
-             AND attempts<3 AND (retry_at IS NULL OR retry_at<=now())
+             AND attempts<3 AND NOT analysis_retry_blocked
+             AND (retry_at IS NULL OR retry_at<=now())
            ORDER BY historical,published_at DESC NULLS LAST,id LIMIT %s""",
         (limit * 3,),
     ).fetchall()
@@ -75,6 +76,7 @@ def main(argv=None):
             """SELECT id,title FROM materials
                WHERE id=ANY(%s) AND radar_version IS NOT NULL
                  AND status IN ('new','deferred','failed') AND attempts<3
+                 AND NOT analysis_retry_blocked
                  AND (retry_at IS NULL OR retry_at<=now())""",
             (args.ids,),
         ).fetchall()
